@@ -25,7 +25,7 @@ MANIFEST
 META.yml
 NOTES
 perlcompile.pod
-Perl_5_Internals.htm
+perloptreeguts.pod
 ramblings/cc.notes
 ramblings/curcop.runtime
 ramblings/flip-flop

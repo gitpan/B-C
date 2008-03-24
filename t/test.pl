@@ -784,7 +784,6 @@ sub run_cc_test {
 		  stderr   => 1, # to capture the "ccode.pl syntax ok"
 		  progfile => $test);
   unless ($?) {
-    1 while unlink($test);
     use ExtUtils::Embed ();
     my $command = ExtUtils::Embed::ccopts." -o $exe $cfile ";
     $command .= " ".ExtUtils::Embed::ldopts("-std");
@@ -798,19 +797,16 @@ sub run_cc_test {
       return 0;
     }
     my $exe = "./".$exe unless $^O eq 'MSWin32';
-    $got = `$exe $NULL`;
+    $got = `$exe`;
     if (defined($got) and ! $?) {
-      unlink $cfile unless $keep_c;
       if ($got =~ /^$expect$/) {
 	print "ok $cnt\n";
-	unlink($cfile, $exe) if $keep_c;
-	unlink ($cfile, $exe) if !$keep_c and ! -s $cfile;
+	unlink ($test, $cfile, $exe) if !$keep_c and ! -s $cfile;
 	return 1;
       } else {
 	$keep_c = $keep_c_fail unless $keep_c;
 	print "not ok $cnt # wanted: \"$expect\", got: \"$got\"\n";
-	unlink($cfile, $exe) if $keep_c;
-	unlink ($cfile, $exe) if !$keep_c and ! -s $cfile;
+	unlink ($test, $cfile, $exe) if !$keep_c and ! -s $cfile;
 	return 0;
       }
     } else {
@@ -818,8 +814,9 @@ sub run_cc_test {
     }
   }
   print "not ok $cnt # wanted: \"$expect\", \$\? = $?, got: \"$got\"\n";
-  unlink($cfile, $exe) if $keep_c;
-  unlink ($cfile, $exe) if !$keep_c and ! -s $cfile;
+  $keep_c = $keep_c_fail unless $keep_c;
+  #unlink($test, $cfile, $exe) unless $keep_c;
+  unlink ($test, $cfile, $exe) if !$keep_c and ! -s $cfile;
   return 0;
 }
 
