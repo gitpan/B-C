@@ -64,6 +64,10 @@ way to cause an error).
 
 Set C<$dbg> to debug this test.
 
+B::Disassembler was enhanced to add comments about some insn.
+The additional third verbose argument for easier roundtrip checking
+is ignored.
+
 =cut
 
 package VirtFile;
@@ -107,6 +111,7 @@ sub GETC($){
 sub READLINE($){
     my( $self ) = @_;
     return undef() if $self->{pos} >= length( $self->{data} );
+    # Todo; strip comments and empty lines
     my $lfpos = index( $self->{data}, "\n", $self->{pos} );
     if( $lfpos < 0 ){
         $lfpos = length( $self->{data} );
@@ -171,7 +176,7 @@ use B::Disassembler qw( &disassemble_fh &get_header );
 
 my( %opsByType, @code2name );
 my( $lineno, $dbg, $firstbadline, @descr );
-$dbg = 1; # debug switch
+$dbg = 0; # debug switch
 
 # $SIG{__WARN__} handler to catch Assembler error messages
 #
@@ -194,12 +199,13 @@ sub putobj($){
 }
 
 # Callback for writing a disassembled statement.
-#
+# Fixed to support the new optional verbose argument, which we ignore here.
 sub putdis(@){
-    my $line = join( ' ', @_ );
+    my ($insn, $arg, $verbose) = @_;
+    my $line = defined($arg) ? "$insn $arg" : $insn;
     ++$lineno;
     print DIS "$line\n";
-    printf "# %5d %s\n", $lineno, $line if $dbg;
+    printf ("# %5d %s verbose:%d\n", $lineno, $line, $verbose) if $dbg;
 }
 
 # Generate assembler instructions from a hash of operand types: each
@@ -318,7 +324,7 @@ for my $opcode ( 0..$#code2name ){
             printf "# %5d %s\n", $lineno, $code2name[$opcode] if $dbg;
 	}
     }
-} 
+}
 
 # Write instruction(s) for incorrect operand values each operand type class
 #
@@ -363,13 +369,14 @@ close( DIS );
 # get header (for debugging only)
 #
 if( $dbg ){
-    my( $magic, $archname, $blversion, $ivsize, $ptrsize, $byteorder ) =
+    my( $magic, $archname, $blversion, $ivsize, $ptrsize, $byteorder, $longsize ) =
         get_header();
     printf "# Magic:        0x%08x\n", $magic;
     print  "# Architecture: $archname\n";
     print  "# Byteloader V: $blversion\n";
     print  "# ivsize:       $ivsize\n";
     print  "# ptrsize:      $ptrsize\n";
+    print  "# longsize:     $longsize\n";
     print  "# Byteorder:    $byteorder\n";
 }
 

@@ -26,7 +26,7 @@ if ($] < 5.009) {
 isnt( keys %insn_data,  0,  '%insn_data exported and populated' );
 isnt( @insn_name,       0,  '   @insn_name' );
 isnt( @optype,          0,  '   @optype' );
-isnt( @specialsv_name,  0,  '   @specialsv_name' );
+isnt( @specialsv_name, 0,  '   @specialsv_name' );
 
 # pick an op that's not likely to go away in the future
 my @data = values %insn_data;

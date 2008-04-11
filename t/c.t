@@ -1,6 +1,7 @@
 #!./perl
 my $keep_c      = 0;	# set it to keep the pl, c and exe files
-my $keep_c_fail = 1;	# set it to keep the pl, c and exe files on failures
+my $keep_c_fail = 0;	# set it to keep the pl, c and exe files on failures
+# better use testc.sh for debugging
 
 BEGIN {
     if ($^O eq 'VMS') {
@@ -31,11 +32,21 @@ undef $/;
 open TEST, "< t/TESTS" or open TEST, "< TESTS";
 my @tests = split /\n###+\n/, <TEST>;
 close TEST;
+my @todo;
+if ($Config{config_args} =~ /DEBUGGING/) {
+  @todo = (5, 7..10, 14..16);
+  #@todo = (2..12, 14..19) if $] > 5.009; #let it fail
+} else {
+  @todo = (8..10, 14..16);
+  #@todo = (2..12, 14..19) if $] > 5.009; #let it fail
+}
+my %todo = map { $_ => 1 } @todo;
 
 print "1..".($#tests+1)."\n";
 
 my $cnt = 1;
 for (@tests) {
+  my $todo = $todo{$cnt} ? " TODO " : "";
   my ($script, $expect) = split />>>+\n/;
-  run_cc_test($cnt++, "C", $script, $expect, $keep_c, $keep_c_fail);
+  run_cc_test($cnt++, "C", $script, $expect, $keep_c, $keep_c_fail, $todo);
 }
