@@ -34,10 +34,11 @@ my @tests = split /\n###+\n/, <TEST>;
 close TEST;
 my @todo;
 if ($Config{config_args} =~ /DEBUGGING/) {
-  @todo = (5, 7..10, 14..16);
+  @todo = (5, 7, 11..12, 17..19);
   #@todo = (2..12, 14..19) if $] > 5.009; #let it fail
 } else {
-  @todo = (8..10, 14..16);
+  @todo = (1..7, 11..13, 17..19);
+  #@todo = (8..10, 14..16);
   #@todo = (2..12, 14..19) if $] > 5.009; #let it fail
 }
 my %todo = map { $_ => 1 } @todo;
