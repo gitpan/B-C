@@ -82,6 +82,9 @@ if ($] < 5.009) {
     $expected =~ s/version //;
     $expected =~ s/DB/DB Exporter Exporter::Heavy/;
 }
+if ($] >= 5.011) {
+    $expected = "attributes Carp Carp::Heavy DB Internals main mro re Regexp Tie Tie::Hash Tie::Hash::NamedCapture utf8 version warnings";
+}
 
 {
     no strict 'vars';

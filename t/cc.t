@@ -33,11 +33,12 @@ open TEST, "< t/TESTS" or open TEST, "< TESTS";
 my @tests = split /\n###+\n/, <TEST>;
 close TEST;
 my @todo;
-if ($Config{config_args} =~ /DEBUGGING/) {
+if ($Config{ccflags} =~ /DEBUGGING/) {
   @todo = (5, 7..10, 14..16);
   # @todo = (2..12, 14..19) if $] > 5.009;  #let it fail
 } else {
   @todo = (8..10, 12, 14..16, 18..19); # 5.8.8
+  @todo = (1..7, 11, 13, 17) if $] > 5.009;  #let it fail;
   # @todo = (2..12, 14..19) if $] > 5.009;  #let it fail
 }
 my %todo = map { $_ => 1 } @todo;

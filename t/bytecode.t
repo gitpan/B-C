@@ -28,7 +28,7 @@ BEGIN {
     require 'test.pl'; # for run_perl()
 }
 use strict;
-my $debugging = ($Config{config_args} =~ m/DEBUGGING/);
+my $debugging = ($Config{ccflags} =~ m/DEBUGGING/);
 
 undef $/;
 open TEST, "< t/TESTS" or open TEST, "< TESTS";
@@ -51,6 +51,7 @@ if ($debugging) {
   # @todo = (2..16, 18..19) if $] >= 5.011; # all SEGV's, let it fail
 } else {
   #@todo = (2..11, 13..16, 18..19) if $] > 5.009;
+  @todo = (2..5, 7, 11, 15) if $] > 5.009;
   # 5.11 without debugging not tested
 }
 my %todo = map { $_ => 1 } @todo;
