@@ -2,6 +2,7 @@
 my $keep_c      = 0;	# set it to keep the c and exe files
 my $keep_c_fail = 0;	# set it to keep the c and exe files on failures. 
 # better use testcc.sh for debugging
+use Config;
 
 BEGIN {
     if ($^O eq 'VMS') {
@@ -33,12 +34,15 @@ open TEST, "< t/TESTS" or open TEST, "< TESTS";
 my @tests = split /\n###+\n/, <TEST>;
 close TEST;
 my @todo;
-if ($Config{ccflags} =~ /DEBUGGING/) {
+if ($Config{ccflags} =~ /-DDEBUGGING/) {
   @todo = (5, 7..10, 14..16);
+  @todo = (1..4, 6, 11..13, 17..19) if $] >= 5.011;
+  @todo = (2..4, 6, 11..12, 17..19) if ($] > 5.009 and $Config{usethreads} eq 'undef');
   # @todo = (2..12, 14..19) if $] > 5.009;  #let it fail
 } else {
   @todo = (8..10, 12, 14..16, 18..19); # 5.8.8
-  @todo = (1..7, 11, 13, 17) if $] > 5.009;  #let it fail;
+  @todo = (2..7, 11) if $] >= 5.010;
+  # @todo = (1..7, 11, 13, 17) if $] > 5.009;  #let it fail;
   # @todo = (2..12, 14..19) if $] > 5.009;  #let it fail
 }
 my %todo = map { $_ => 1 } @todo;

@@ -777,6 +777,7 @@ sub run_cc_test {
   my $test = lc($backend)."code".$cnt.".pl";
   my $cfile = lc($backend)."code".$cnt.".c";
   my $exe = lc($backend)."code".$cnt.$Config{exe_ext};
+  unlink ($test, $cfile, $exe);
   open T, ">$test"; print T $script; close T;
   $got = run_perl(switches => [ "-Mblib -MO=$backend,-o${cfile}" ],
 		  verbose  => 0, # for debugging
@@ -816,7 +817,7 @@ sub run_cc_test {
   print "not ok $cnt #$todo wanted: \"$expect\", \$\? = $?, got: \"$got\"\n";
   $keep_c = $keep_c_fail unless $keep_c;
   #unlink($test, $cfile, $exe) unless $keep_c;
-  unlink ($test, $cfile, $exe) if !$keep_c and ! -s $cfile;
+  unlink ($test, $cfile, $exe) if !$keep_c;
   return 0;
 }
 

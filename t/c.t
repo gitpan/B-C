@@ -33,12 +33,15 @@ open TEST, "< t/TESTS" or open TEST, "< TESTS";
 my @tests = split /\n###+\n/, <TEST>;
 close TEST;
 my @todo;
-if ($Config{ccflags} =~ /DEBUGGING/) {
-  @todo = (5, 7, 11..12, 17..19);
+if ($Config{ccflags} =~ /-DDEBUGGING/) {
+  @todo = (8..10, 14..16);
+  @todo = (2..7, 11..12, 17..19) if ($] > 5.009 and $Config{usethreads} eq 'undef');
+  #@todo = (5, 7, 11..12, 17..19);
   #@todo = (2..12, 14..19) if $] > 5.009; #let it fail
 } else {
   #@todo = (1..7, 11..13, 17..19);
   @todo = (8..10, 14..16);
+  @todo = (2..7, 11) if $] > 5.009;
   #@todo = (2..12, 14..19) if $] > 5.009; #let it fail
 }
 my %todo = map { $_ => 1 } @todo;
