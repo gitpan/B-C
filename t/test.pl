@@ -793,7 +793,7 @@ sub run_cc_test {
     my $cmdline = "$Config{cc} $command $NULL";
     system($cmdline);
     unless (-e $exe) {
-      print "not ok $cnt #$todo failed $cmdline\n";
+      print "not ok $cnt $todo failed $cmdline\n";
       print STDERR "# ",system("$Config{cc} $command");
       return 0;
     }
@@ -801,12 +801,12 @@ sub run_cc_test {
     $got = `$exe`;
     if (defined($got) and ! $?) {
       if ($got =~ /^$expect$/) {
-	print "ok $cnt #$todo\n";
+	print "ok $cnt", $todo eq '#' ? "\n" : " $todo\n";
 	unlink ($test, $cfile, $exe) if !$keep_c and ! -s $cfile;
 	return 1;
       } else {
 	$keep_c = $keep_c_fail unless $keep_c;
-	print "not ok $cnt #$todo wanted: \"$expect\", got: \"$got\"\n";
+	print "not ok $cnt $todo wanted: \"$expect\", got: \"$got\"\n";
 	unlink ($test, $cfile, $exe) if !$keep_c and ! -s $cfile;
 	return 0;
       }
@@ -814,7 +814,7 @@ sub run_cc_test {
       $got = '';
     }
   }
-  print "not ok $cnt #$todo wanted: \"$expect\", \$\? = $?, got: \"$got\"\n";
+  print "not ok $cnt $todo wanted: \"$expect\", \$\? = $?, got: \"$got\"\n";
   $keep_c = $keep_c_fail unless $keep_c;
   #unlink($test, $cfile, $exe) unless $keep_c;
   unlink ($test, $cfile, $exe) if !$keep_c;

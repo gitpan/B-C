@@ -21,6 +21,60 @@
   #include "ppport.h"
 #endif
 
+/* macros for correct constant construction */
+# if INTSIZE >= 2
+#  define U16_CONST(x) ((U16)x##U)
+# else
+#  define U16_CONST(x) ((U16)x##UL)
+# endif
+
+# if INTSIZE >= 4
+#  define U32_CONST(x) ((U32)x##U)
+# else
+#  define U32_CONST(x) ((U32)x##UL)
+# endif
+
+# ifdef HAS_QUAD
+typedef I64TYPE I64;
+typedef U64TYPE U64;
+#  if INTSIZE >= 8
+#   define U64_CONST(x) ((U64)x##U)
+#  elif LONGSIZE >= 8
+#   define U64_CONST(x) ((U64)x##UL)
+#  elif QUADKIND == QUAD_IS_LONG_LONG
+#   define U64_CONST(x) ((U64)x##ULL)
+#  else /* best guess we can make */
+#   define U64_CONST(x) ((U64)x##UL)
+#  endif
+# endif
+
+/* byte-swapping functions for big-/little-endian conversion */
+# define _swab_16_(x) ((U16)( \
+         (((U16)(x) & U16_CONST(0x00ff)) << 8) | \
+         (((U16)(x) & U16_CONST(0xff00)) >> 8) ))
+
+# define _swab_32_(x) ((U32)( \
+         (((U32)(x) & U32_CONST(0x000000ff)) << 24) | \
+         (((U32)(x) & U32_CONST(0x0000ff00)) <<  8) | \
+         (((U32)(x) & U32_CONST(0x00ff0000)) >>  8) | \
+         (((U32)(x) & U32_CONST(0xff000000)) >> 24) ))
+
+# ifdef HAS_QUAD
+#  define _swab_64_(x) ((U64)( \
+          (((U64)(x) & U64_CONST(0x00000000000000ff)) << 56) | \
+          (((U64)(x) & U64_CONST(0x000000000000ff00)) << 40) | \
+          (((U64)(x) & U64_CONST(0x0000000000ff0000)) << 24) | \
+          (((U64)(x) & U64_CONST(0x00000000ff000000)) <<  8) | \
+          (((U64)(x) & U64_CONST(0x000000ff00000000)) >>  8) | \
+          (((U64)(x) & U64_CONST(0x0000ff0000000000)) >> 24) | \
+          (((U64)(x) & U64_CONST(0x00ff000000000000)) >> 40) | \
+          (((U64)(x) & U64_CONST(0xff00000000000000)) >> 56) ))
+# else
+#  define _swab_64_(x) _swab_32_((U32)(x) & U32_CONST(0xffffffff))
+# endif
+
+#  define _swab_iv_(x,size) ((size==4) ? _swab_32_(x) : ((size==8) ? _swab_64_(x) : _swab_16_(x)))
+
 struct byteloader_fdata {
     SV	*datasv;
     int  next_out;
@@ -44,6 +98,7 @@ struct byteloader_header {
     int 	ptrsize;
     int 	longsize;
     char 	byteorder[16];
+    int 	archflag;
 } bl_header;
 
 struct byteloader_state {
@@ -111,60 +166,60 @@ enum {
     INSN_XIO_FMT_GV,			/* 43 */
     INSN_XIO_BOTTOM_NAME,			/* 44 */
     INSN_XIO_BOTTOM_GV,			/* 45 */
-    INSN_XIO_TYPE,			/* 46 */
-    INSN_XIO_FLAGS,			/* 47 */
-    INSN_XCV_XSUBANY,			/* 48 */
-    INSN_XCV_STASH,			/* 49 */
-    INSN_XCV_START,			/* 50 */
-    INSN_XCV_ROOT,			/* 51 */
-    INSN_XCV_GV,			/* 52 */
-    INSN_XCV_FILE,			/* 53 */
-    INSN_XCV_DEPTH,			/* 54 */
-    INSN_XCV_PADLIST,			/* 55 */
-    INSN_XCV_OUTSIDE,			/* 56 */
-    INSN_XCV_OUTSIDE_SEQ,			/* 57 */
-    INSN_XCV_FLAGS,			/* 58 */
-    INSN_AV_EXTEND,			/* 59 */
-    INSN_AV_PUSHX,			/* 60 */
-    INSN_AV_PUSH,			/* 61 */
-    INSN_XAV_FILL,			/* 62 */
-    INSN_XAV_MAX,			/* 63 */
-    INSN_XAV_FLAGS,			/* 64 */
-    INSN_XHV_NAME,			/* 65 */
-    INSN_HV_STORE,			/* 66 */
-    INSN_SV_MAGIC,			/* 67 */
-    INSN_MG_OBJ,			/* 68 */
-    INSN_MG_PRIVATE,			/* 69 */
-    INSN_MG_FLAGS,			/* 70 */
-    INSN_MG_NAME,			/* 71 */
-    INSN_MG_NAMEX,			/* 72 */
-    INSN_XMG_STASH,			/* 73 */
-    INSN_GV_FETCHPV,			/* 74 */
-    INSN_GV_FETCHPVX,			/* 75 */
-    INSN_GV_STASHPV,			/* 76 */
-    INSN_GV_STASHPVX,			/* 77 */
-    INSN_GP_SV,			/* 78 */
-    INSN_GP_REFCNT,			/* 79 */
-    INSN_GP_REFCNT_ADD,			/* 80 */
-    INSN_GP_AV,			/* 81 */
-    INSN_GP_HV,			/* 82 */
-    INSN_GP_CV,			/* 83 */
-    INSN_GP_FILE,			/* 84 */
-    INSN_GP_IO,			/* 85 */
-    INSN_GP_FORM,			/* 86 */
-    INSN_GP_CVGEN,			/* 87 */
-    INSN_GP_LINE,			/* 88 */
-    INSN_GP_SHARE,			/* 89 */
-    INSN_XGV_FLAGS,			/* 90 */
-    INSN_OP_NEXT,			/* 91 */
-    INSN_OP_SIBLING,			/* 92 */
-    INSN_OP_PPADDR,			/* 93 */
-    INSN_OP_TARG,			/* 94 */
-    INSN_OP_TYPE,			/* 95 */
-    INSN_OP_OPT,			/* 96 */
-    INSN_OP_LATEFREE,			/* 97 */
-    INSN_OP_LATEFREED,			/* 98 */
-    INSN_OP_ATTACHED,			/* 99 */
+    INSN_XIO_SUBPROCESS,			/* 46 */
+    INSN_XIO_TYPE,			/* 47 */
+    INSN_XIO_FLAGS,			/* 48 */
+    INSN_XCV_XSUBANY,			/* 49 */
+    INSN_XCV_STASH,			/* 50 */
+    INSN_XCV_START,			/* 51 */
+    INSN_XCV_ROOT,			/* 52 */
+    INSN_XCV_GV,			/* 53 */
+    INSN_XCV_FILE,			/* 54 */
+    INSN_XCV_DEPTH,			/* 55 */
+    INSN_XCV_PADLIST,			/* 56 */
+    INSN_XCV_OUTSIDE,			/* 57 */
+    INSN_XCV_OUTSIDE_SEQ,			/* 58 */
+    INSN_XCV_FLAGS,			/* 59 */
+    INSN_AV_EXTEND,			/* 60 */
+    INSN_AV_PUSHX,			/* 61 */
+    INSN_AV_PUSH,			/* 62 */
+    INSN_XAV_FILL,			/* 63 */
+    INSN_XAV_MAX,			/* 64 */
+    INSN_XAV_FLAGS,			/* 65 */
+    INSN_XHV_RITER,			/* 66 */
+    INSN_XHV_NAME,			/* 67 */
+    INSN_XHV_PMROOT,			/* 68 */
+    INSN_HV_STORE,			/* 69 */
+    INSN_SV_MAGIC,			/* 70 */
+    INSN_MG_OBJ,			/* 71 */
+    INSN_MG_PRIVATE,			/* 72 */
+    INSN_MG_FLAGS,			/* 73 */
+    INSN_MG_NAME,			/* 74 */
+    INSN_MG_NAMEX,			/* 75 */
+    INSN_XMG_STASH,			/* 76 */
+    INSN_GV_FETCHPV,			/* 77 */
+    INSN_GV_FETCHPVX,			/* 78 */
+    INSN_GV_STASHPV,			/* 79 */
+    INSN_GV_STASHPVX,			/* 80 */
+    INSN_GP_SV,			/* 81 */
+    INSN_GP_REFCNT,			/* 82 */
+    INSN_GP_REFCNT_ADD,			/* 83 */
+    INSN_GP_AV,			/* 84 */
+    INSN_GP_HV,			/* 85 */
+    INSN_GP_CV,			/* 86 */
+    INSN_GP_FILE,			/* 87 */
+    INSN_GP_IO,			/* 88 */
+    INSN_GP_FORM,			/* 89 */
+    INSN_GP_CVGEN,			/* 90 */
+    INSN_GP_LINE,			/* 91 */
+    INSN_GP_SHARE,			/* 92 */
+    INSN_XGV_FLAGS,			/* 93 */
+    INSN_OP_NEXT,			/* 94 */
+    INSN_OP_SIBLING,			/* 95 */
+    INSN_OP_PPADDR,			/* 96 */
+    INSN_OP_TARG,			/* 97 */
+    INSN_OP_TYPE,			/* 98 */
+    INSN_OP_SEQ,			/* 99 */
     INSN_OP_FLAGS,			/* 100 */
     INSN_OP_PRIVATE,			/* 101 */
     INSN_OP_FIRST,			/* 102 */
@@ -172,46 +227,51 @@ enum {
     INSN_OP_OTHER,			/* 104 */
     INSN_OP_PMREPLROOT,			/* 105 */
     INSN_OP_PMREPLSTART,			/* 106 */
-    INSN_OP_PMSTASHPV,			/* 107 */
-    INSN_OP_PMREPLROOTPO,			/* 108 */
-    INSN_OP_PMSTASH,			/* 109 */
-    INSN_OP_PMREPLROOTGV,			/* 110 */
-    INSN_PREGCOMP,			/* 111 */
-    INSN_OP_PMFLAGS,			/* 112 */
-    INSN_OP_SV,			/* 113 */
-    INSN_OP_PADIX,			/* 114 */
-    INSN_OP_PV,			/* 115 */
-    INSN_OP_PV_TR,			/* 116 */
-    INSN_OP_REDOOP,			/* 117 */
-    INSN_OP_NEXTOP,			/* 118 */
-    INSN_OP_LASTOP,			/* 119 */
-    INSN_COP_LABEL,			/* 120 */
-    INSN_COP_STASHPV,			/* 121 */
-    INSN_COP_FILE,			/* 122 */
-    INSN_COP_STASH,			/* 123 */
-    INSN_COP_FILEGV,			/* 124 */
-    INSN_COP_SEQ,			/* 125 */
-    INSN_COP_LINE,			/* 126 */
-    INSN_COP_WARNINGS,			/* 127 */
-    INSN_MAIN_START,			/* 128 */
-    INSN_MAIN_ROOT,			/* 129 */
-    INSN_MAIN_CV,			/* 130 */
-    INSN_CURPAD,			/* 131 */
-    INSN_PUSH_BEGIN,			/* 132 */
-    INSN_PUSH_INIT,			/* 133 */
-    INSN_PUSH_END,			/* 134 */
-    INSN_CURSTASH,			/* 135 */
-    INSN_DEFSTASH,			/* 136 */
-    INSN_DATA,			/* 137 */
-    INSN_INCAV,			/* 138 */
-    INSN_LOAD_GLOB,			/* 139 */
-    INSN_REGEX_PADAV,			/* 140 */
-    INSN_DOWARN,			/* 141 */
-    INSN_COMPPAD_NAME,			/* 142 */
-    INSN_XGV_STASH,			/* 143 */
-    INSN_SIGNAL,			/* 144 */
-    INSN_FORMFEED,			/* 145 */
-    MAX_INSN = 145
+    INSN_OP_PMNEXT,			/* 107 */
+    INSN_OP_PMSTASHPV,			/* 108 */
+    INSN_OP_PMREPLROOTPO,			/* 109 */
+    INSN_OP_PMSTASH,			/* 110 */
+    INSN_OP_PMREPLROOTGV,			/* 111 */
+    INSN_PREGCOMP,			/* 112 */
+    INSN_OP_PMFLAGS,			/* 113 */
+    INSN_OP_PMPERMFLAGS,			/* 114 */
+    INSN_OP_PMDYNFLAGS,			/* 115 */
+    INSN_OP_SV,			/* 116 */
+    INSN_OP_PADIX,			/* 117 */
+    INSN_OP_PV,			/* 118 */
+    INSN_OP_PV_TR,			/* 119 */
+    INSN_OP_REDOOP,			/* 120 */
+    INSN_OP_NEXTOP,			/* 121 */
+    INSN_OP_LASTOP,			/* 122 */
+    INSN_COP_LABEL,			/* 123 */
+    INSN_COP_STASHPV,			/* 124 */
+    INSN_COP_FILE,			/* 125 */
+    INSN_COP_STASH,			/* 126 */
+    INSN_COP_FILEGV,			/* 127 */
+    INSN_COP_SEQ,			/* 128 */
+    INSN_COP_ARYBASE,			/* 129 */
+    INSN_COP_LINE,			/* 130 */
+    INSN_COP_IO,			/* 131 */
+    INSN_COP_WARNINGS,			/* 132 */
+    INSN_MAIN_START,			/* 133 */
+    INSN_MAIN_ROOT,			/* 134 */
+    INSN_MAIN_CV,			/* 135 */
+    INSN_CURPAD,			/* 136 */
+    INSN_PUSH_BEGIN,			/* 137 */
+    INSN_PUSH_INIT,			/* 138 */
+    INSN_PUSH_END,			/* 139 */
+    INSN_CURSTASH,			/* 140 */
+    INSN_DEFSTASH,			/* 141 */
+    INSN_DATA,			/* 142 */
+    INSN_INCAV,			/* 143 */
+    INSN_LOAD_GLOB,			/* 144 */
+    INSN_REGEX_PADAV,			/* 145 */
+    INSN_DOWARN,			/* 146 */
+    INSN_COMPPAD_NAME,			/* 147 */
+    INSN_XGV_STASH,			/* 148 */
+    INSN_SIGNAL,			/* 149 */
+    INSN_FORMFEED,			/* 150 */
+    MAX_INSN = 150
 };
 
 enum {
