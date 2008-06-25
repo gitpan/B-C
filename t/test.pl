@@ -505,8 +505,9 @@ sub runperl {
 	if ref $_[0] and ref $_[0] eq 'HASH';
     my $runperl = &_create_runperl;
     my $result;
-
-    my $tainted = ${^TAINT};
+    # ${^TAINT} is invalid in perl5.00505
+    my $tainted;
+    eval '$tainted = ${^TAINT};' if $] >= 5.006;
     my %args = @_;
     exists $args{switches} && grep m/^-T$/, @{$args{switches}} and $tainted = $tainted + 1;
 
@@ -770,6 +771,16 @@ WHOA
     _ok( !$diag, _where(), $name );
 }
 
+sub tests {
+  my $in = shift || "t/TESTS";
+  $in = "TESTS" unless -f $in;
+  undef $/;
+  open TEST, "< $in" or die "Cannot open $in";
+  my @tests = split /\n####+.*####\n/, <TEST>;
+  close TEST;
+  @tests;
+}
+
 sub run_cc_test {
   my ($cnt, $backend, $script, $expect, $keep_c, $keep_c_fail, $todo) = @_;
   my $got;
@@ -779,7 +790,13 @@ sub run_cc_test {
   my $exe = lc($backend)."code".$cnt.$Config{exe_ext};
   unlink ($test, $cfile, $exe);
   open T, ">$test"; print T $script; close T;
-  $got = run_perl(switches => [ "-Mblib -MO=$backend,-o${cfile}" ],
+  my $Mblib = $] >= 5.009005 ? "-Mblib" : ""; # test older perls
+  unless ($Mblib) {
+    if ($INC[1] =~ m|blib/arch$| and $INC[2] =~ m|blib/lib|) {
+      $Mblib = "-Mblib"; # forced via cmdline
+    }
+  }
+  $got = run_perl(switches => [ "$Mblib -MO=$backend,-o${cfile}" ],
 		  verbose  => 0, # for debugging
 		  nolib    => $ENV{PERL_CORE} ? 0 : 1, # include ../lib only in CORE
 		  stderr   => 1, # to capture the "ccode.pl syntax ok"

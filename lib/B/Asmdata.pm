@@ -255,27 +255,24 @@ Since Perl version 5.10 defined in L<B>.
 
 =back
 
-=head1 PORTABILITY  (TODO)
+=head1 PORTABILITY
 
 All bytecode values are already portable.
-Cross-platform and cross-version portability is just not implemented yet.
-Cross-version portability will be very limited, cross-platform will
-do with the same threading model.
+Cross-platform portability is implemented, cross-version not yet.
+Cross-version portability will be very limited, cross-platform only
+for the same threading model.
 
-=head2 CROSS-PLATFORM PORTABILITY (TODO)
+=head2 CROSS-PLATFORM PORTABILITY
 
-For different endian-ness there are ByteLoader converters planned.
+For different endian-ness there are ByteLoader converters in effect.
 Header entry: byteorder.
 
 64int - 64all - 32int is portable. Header entry: ivsize
 
-Threading: unsolvable. Header entry: archname has "-thread"
+ITHREADS are unportable.
+Header entry: archflag - bitflag 1.
 
-Cross-platform portability will be available only if threading
-is on or off on both perls (compiler and runner). TODO: Check in
-bytecode_header_check().
-
-=head2 CROSS-VERSION PORTABILITY (TODO)
+=head2 CROSS-VERSION PORTABILITY (TODO - HARD)
 
 Bytecode ops:
 We can only reliably load bytecode from previous versions and promise

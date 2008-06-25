@@ -70,7 +70,7 @@ int bytecode_header_check(pTHX_ struct byteloader_state *bstate, U32 *isjit) {
         }
     }
     BGET_strconst(str,80);	/* archname */
-    /* relaxed strictness, only check for ithread in archflag */
+    /* just warn. relaxed strictness, only check for ithread in archflag */
     if (strNE(str, ARCHNAME)) {
 	HEADER_WARN2("wrong architecture (want %s, you have %s)", str, ARCHNAME);
     }
@@ -186,9 +186,6 @@ byterun(pTHX_ struct byteloader_state *bstate)
 
         while ((insn = BGET_FGETC()) != EOF) {
 	  CopLINE(PL_curcop) = bstate->bs_fdata->next_out;
-#ifdef DEBUG_t_TEST_
-          if (PL_op && DEBUG_t_TEST_) debop(PL_op);
-#endif
 	  switch (insn) {
 	  case INSN_COMMENT:		/* 35 */
 	    {
@@ -913,8 +910,8 @@ byterun(pTHX_ struct byteloader_state *bstate)
 		svindex arg;
 		BGET_svindex(arg);
 		DEBUG_v(Perl_deb(aTHX_ "(insn %3d) gp_sv svindex:0x%x, ix:%d\n", insn, arg, ix));
-		GvSV(bstate->bs_sv) = arg;
-		DEBUG_v(Perl_deb(aTHX_ "	   GvSV(bstate->bs_sv) = arg;\n"));
+		BSET_gp_sv(bstate->bs_sv, arg);
+		DEBUG_v(Perl_deb(aTHX_ "	   BSET_gp_sv(bstate->bs_sv, arg)\n"));
 		break;
 	    }
 	  case INSN_GP_REFCNT:		/* 82 */
@@ -1546,9 +1543,12 @@ byterun(pTHX_ struct byteloader_state *bstate)
 		break;
 	    }
 	    default:
-	      Perl_croak(aTHX_ "Illegal bytecode instruction %d\n", insn);
+	      Perl_croak(aTHX_ "Illegal bytecode instruction %d. Version incompatibility.\n", insn);
 	      /* NOTREACHED */
 	  }
+#ifdef DEBUG_t_TEST_
+          if (PL_op && DEBUG_t_TEST_) debop(PL_op);
+#endif
         }
     }
     return 0;
