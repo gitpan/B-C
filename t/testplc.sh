@@ -21,8 +21,11 @@ function bcall {
 function btest {
     n=$1
     o="bytecode$n"
-    if [ -z "$2" ]; then 
+    if [ -z "$2" ]; then
+        if [ "$n" = "08" ]; then n=8; fi 
+        if [ "$n" = "09" ]; then n=9; fi
 	echo "${tests[${n}]}" > ${o}.pl
+        str="${tests[${n}]}"
     else 
 	echo "$2" > ${o}.pl
     fi
@@ -70,11 +73,11 @@ result[1]='hi';
 tests[2]="for (1,2,3) { print if /\d/ }"
 result[2]='123';
 tests[3]='$_ = "xyxyx"; %j=(1,2); s/x/$j{print("z")}/ge; print $_'
-result[3]='hi';
+result[3]='zzz2y2y2';
 tests[4]='$_ = "xyxyx"; %j=(1,2); s/x/$j{print("z")}/g; print $_'
-result[4]='zzz2y2y2';
+result[4]='z2y2y2';
 tests[5]='split /a/,"bananarama"; print @_'
-result[5]='z2y2y2';
+result[5]='bnnrm';
 tests[6]="{package P; sub x {print 'ya'} x}"
 result[6]='ya';
 tests[7]='@z = split /:/,"b:r:n:f:g"; print @z'
@@ -120,7 +123,7 @@ if [ -n "$1" ]; then
     shift
   done
 else
-  for b in $(seq 19); do
+  for b in $(seq -f"%02.0f" 19); do
     btest $b
   done
 fi

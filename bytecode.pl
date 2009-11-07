@@ -680,8 +680,8 @@ __END__
 # The argtype is either a single type or "rightvaluecast/argtype".
 # The version is either "i" or "!i" for ithreads or not, 
 # or num, num-num, >num or <num.
-# "0" is for all, "<10" requires PERL_VERSION<10, "10" or ">10" requires
-# PERL_VERSION>10
+# "0" is for all, "<10" requires PERL_VERSION<10, "10" requires
+# PERL_VERSION>=10, ">10" requires PERL_VERSION>10
 #
 #version opcode	lvalue					argtype		flags
 #

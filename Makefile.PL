@@ -12,7 +12,7 @@ WriteMakefile(
     PL_FILES => {'script/perlcc.PL'  => '$(INST_BIN)/perlcc' },
     PREREQ_PM => {'B::Concise' => '0.66',
 	          'B'          => '1.0901'},
-    'AUTHOR' => 'Malcolm Beattie <mbeattie@sable.ox.ac.uk>',
+    'AUTHOR' => 'Malcolm Beattie <mbeattie@sable.ox.ac.uk>, Reini Urban <rurban@cpan.org>',
     'ABSTRACT' => 'perl compiler',
    ($ExtUtils::MakeMaker::VERSION gt '6.31' ?
     ('EXTRA_META'  => "recommends:\n" .
@@ -35,7 +35,7 @@ package MY;
 
 sub libscan {
   # ignore temp testing files
-  return 0 if $_[1] =~ /(bytecode.*\.pl|ccode\d+\..*|regen_lib\.pl)$/;
+  return 0 if $_[1] =~ /(.svn|bytecode.*\.pl|c?ccode\d+\..*|regen_lib\.pl)$/;
   return $_[1];
 }
 

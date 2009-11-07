@@ -1,18 +1,21 @@
 Abbrevations: bc B::ByteCode, c B::C, cc B::CC, 
-              -D -DDEBUGGING perl, also used as d version suffix, eg 5.8.8d
+              -D -DDEBUGGING perl, also used as d version suffix, 
+              eg 5.8.8d
               -nt not threaded perl.
 
-Only support 5.8 and newer. 5.6 and earlier had a good core perl compiler.
+Only support 5.8 and newer. 5.6 and earlier had a good core perl
+compiler.
 
 Basic testsuite added, coverage TODO.
 Same ok and failures as with 5.8 and 5.9.4
-  In 5.8.8 and 5.8.9 we have the exact same errors in the testsuite for the new 
-  CPAN compiler and the CORE compiler.
+  In 5.8.8 and 5.8.9 we have the exact same errors in the 
+  testsuite for the new CPAN compiler and the CORE compiler.
 Minor B::CC bugs fixed.
 B:C Problems:
-  invalid pad in pad_sv, pad_new, save_clearsv - cause: setting PL_curpad at save_context
+  invalid pad in pad_sv, pad_new, save_clearsv - 
+    cause: setting PL_curpad at save_context
   Modification of a read-only value attempted - save_context ?
-5.11 regex pad wrong
+5.11 regex pad fixed
 
 5.00505 i686-linux
 t/bytecode.t	all ok
@@ -75,54 +78,58 @@ t/cc.t       (Wstat: 0 Tests: 19 Failed: 12)
 
 5.8.8d:
 t/bytecode.t: ok
-t/c.t        (Wstat: 0 Tests: 19 Failed: 13)
-  FAILED tests 5, 7-12, 14-19 (was: 11-12 17-19)
-  panic: invalid pad in pad_sv: 0x8c1760[0x8de3b8]
-t/cc.t       (Wstat: 0 Tests: 19 Failed: 13)
-  FAILED tests 5, 7-12, 14-19 (was: 11-12 17-19)
+t/c.t         Failed tests: 8-11
+t/cc.t        Failed tests: 8-11
 
 5.8.9d:
-t/bytecode.t: all ok
-t/c.t         8-10 14-16
-t/cc.t        11-12 17-19
+t/bytecode.t: ok
+t/c.t         Failed tests: 8-11
+t/cc.t        Failed tests: 8-11
 
 5.10.0:
 t/bytecode   (Wstat: 0 Tests: 19 Failed: 6)
-  FAILED tests 2-5, 7, 11, 15
+  Failed tests: 2-5, 7, 11, 15
 t/c.t        (Wstat: 0 Tests: 19 Failed: 6)
-  Failed tests:  8-10 14-16
+  Failed tests:  6-11
   2008-04-27 17:44:52 URBANR: 2-7 11
 t/cc.t       (Wstat: 0 Tests: 19 Failed: 9)
   Failed tests:  1-7 11 13 17 (was: 2-7 11, was: 8-10, 12, 14-16, 18-19)
-                 8-10 12 14-16 18-19
 
 5.10.0d:
-t/bytecode   (Wstat: 0 Tests: 19 Failed: 9)
-  FAILED tests 2-5, 7, 11, 15 (was: 2-5, 7, 9-12, 15)
+t/bytecode.t (Wstat: 0 Tests: 19 Failed: 9)
+  Failed tests:  2-5, 7, 9-12
   Assertion (((PMOP*)(*Perl_Iop_ptr(my_perl))))->op_pmflags & 0x0002
   Modification of a read-only value attempted
   11 Assertion ((((shplep)->sv_flags & (0x00004000|0x00008000)) == 0x00008000) && (((svtype)((shplep)->sv_flags & 0xff)) == SVt_PVGV || ((svtype)((shplep)->sv_flags & 0xff)) == SVt_PVLV)) failed
-t/c.t        (Wstat: 0 Tests: 19 Failed: 6)
+t/c.t        (Wstat: 0 Tests: 19 Failed: 11)
+  Failed tests:  5-12, 17-19
   Assertion ((svtype)((_svi)->sv_flags & 0xff)) != SVt_PVCV failed
-  Failed tests:   2-7, 11-12, 17-19 (was: 2-4 6 8-10 14-16; 2-7 11 18)
 t/cc.t       (Wstat: 0 Tests: 19 Failed: 9)
-  Failed tests:  2-4, 6, 11-12, 17-19 (was: 8-10, 12, 14-16, 18-19)
+  Failed tests:  5-12, 17 (was: 2-4, 6, 11-12, 17-19)
 
 5.10.0-nt (not threaded):
+t/bytecode.t (Wstat: 0 Tests: 19 Failed: 2)
+  Failed tests:  7, 11
+t/c.t        (Wstat: 0 Tests: 19 Failed: 6)
+  Failed tests:  6-11
+t/cc.t       (Wstat: 0 Tests: 19 Failed: 6)
+  Failed tests:  6-11
+
+5.10.0d-nt (debugging, not threaded):
 t/bytecode.t (Wstat: 0 Tests: 19 Failed: 5)
   Failed tests:  7, 9-12
-t/c.t        (Wstat: 0 Tests: 19 Failed: 17)
-  Failed tests:  2-12, 14-19
-t/cc.t       (Wstat: 0 Tests: 19 Failed: 17)
-  Failed tests:  2-12, 14-19
+t/c.t        (Wstat: 0 Tests: 19 Failed: 11)
+  Failed tests:  5-12, 17-19
+t/cc.t       (Wstat: 0 Tests: 19 Failed: 9)
+  Failed tests:  5-12, 17
 
 5.11d@34005
 t/bytecode.t (Wstat: 0 Tests: 19 Failed: 6)
   Failed tests:  4, 9-12, 16
-t/c.t        (Wstat: 0 Tests: 19 Failed: 10)
-  Failed tests:  6, 8-10, 12, 14, 16-19 (was: 8-10, 14-16)
-t/cc.t       (Wstat: 0 Tests: 19 Failed: 11)
-  Failed tests: 2-19 (was 1-4, 6, 11-13, 17-19)
+t/c.t        (Wstat: 0 Tests: 19 Failed: 6)
+  Failed tests:  4, 6, 8-11
+t/cc.t       (Wstat: 0 Tests: 19 Failed: 6)
+  Failed tests:  4, 6, 8-11
 
 5.11 @33704 i386-linux-thread-multi
 t/bytecode.t (Wstat: 0 Tests: 20 Failed: 10)
@@ -160,6 +167,9 @@ Is FAKE flag of the padsv is missing or should we check for readonly pads?
 	  REFCNT = 2147483129
 	  FLAGS = (READONLY)
 -Dt crash fixed by core patch pl-dump-const.patch
+
+cop_io status?
+http://www.xray.mpe.mpg.de/mailing-lists/perl5-porters/2006-05/msg00770.html
 
 5.8 status
 ----------
@@ -268,4 +278,4 @@ added Jit and Asm layout, with the idea of using either
 lightning as jit backend (Jit), or creating our own assembler (Asm) 
 to be able to use a high-level language.
 
-2008-06-05 11:18:49 urbanr
+2009-11-07 14:34:56 rurban
