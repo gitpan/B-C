@@ -1,7 +1,7 @@
 #      C.pm
 #
 #      Copyright (c) 1996, 1997, 1998 Malcolm Beattie
-#      Copyright (c) 2008 Reini Urban
+#      Copyright (c) 2008, 2009 Reini Urban
 #
 #      You may distribute under the terms of either the GNU General Public
 #      License or the Artistic License, as specified in the README file.
@@ -9,7 +9,7 @@
 
 package B::C;
 
-our $VERSION = '1.04_21';
+our $VERSION = '1.04_22';
 
 package B::C::Section;
 
@@ -457,7 +457,7 @@ sub B::OP::save {
       my $ix = $copsect->index;
       $init->add(sprintf("cop_list[$ix].op_ppaddr = %s;", $op->ppaddr))
         unless $optimize_ppaddr;
-      savesym($op, "&cop_list[$ix]");
+      savesym($op, "(OP*)&cop_list[$ix]");
     } else {
       $opsect->comment($opsect_common);
       $opsect->add($op->_save_common);
@@ -951,9 +951,16 @@ sub B::PVMG::save {
     return $sym if defined $sym;
     my( $savesym, $pvmax, $len, $pv ) = save_pv_or_rv( $sv );
 
-    $xpvmgsect->add(sprintf("%s, %u, %u, %d, %s, 0, 0",
-                            $savesym, $len, $pvmax,
-                            $sv->IVX, $sv->NVX));
+    if ($PERL510) {
+      # xnv_u, pv_cur, pv_len, xiv_u, xmg_u, xmg_stash
+      $xpvmgsect->add(sprintf("%s, %s, %u, %u, %d, 0, 0",
+                              $savesym, $sv->NVX, $len, $pvmax,
+                              $sv->IVX));
+    } else {
+      $xpvmgsect->add(sprintf("%s, %u, %u, %d, %s, 0, 0",
+                              $savesym, $len, $pvmax,
+                              $sv->IVX, $sv->NVX));
+    }
     $svsect->add(sprintf("&xpvmg_list[%d], %lu, 0x%x",
                          $xpvmgsect->index, $sv->REFCNT , $sv->FLAGS));
     if (defined($pv) && !$pv_copy_on_grow) {
@@ -1199,7 +1206,7 @@ sub B::CV::save {
 	warn sprintf("done saving op tree for CV 0x%x, name %s, root 0x%x\n",
 		     $$cv, $ppname, $$root) if $debug{cv};
 	if ($$padlist) {
-	    warn sprintf("saving PADLIST 0x%x for CV 0x%x\n",
+	    warn sprintf("saving PADLIST 0x%x for CV 0x%x",
 			 $$padlist, $$cv) if $debug{cv};
 	    $padlist->save;
 	    warn sprintf("done saving PADLIST 0x%x for CV 0x%x\n",
@@ -1218,13 +1225,16 @@ sub B::CV::save {
 	$pvsym = "(HEK *)$pvsym";
 	# $pvsym = $heksect->add(cstring($pv));
       } else {
-	$pvsym = "NULL";
+	$pvsym = "0";
       }
-      #                              nv_u cur len iv_u mg_u mg_stash cv_stash start_u root_u cv_gv cv_file cv_padlist cv_outside outside_seq cv_flags
-      $symsect->add(sprintf("XPVCVIX%d\t%s, %u, 0, %s,  0,   Nullhv, Nullhv,   %s, s\\_%x, Nullgv, \"\", s\\_%x, (CV*)s\\_%x, 0x%x, 0x%x",
-			    $xpvcv_ix, 0, length($pv), $pvsym,
+      # TODO:
+      my $ourstash = "0"; #Nullhv";
+      #                              nv_u cur len iv_u    mg_u mg_stash cv_stash start_u root_u cv_gv cv_file cv_padlist cv_outside outside_seq cv_flags
+      $symsect->add(sprintf("XPVCVIX%d\t0, %u, 0, %s,    %s,  Nullhv,  Nullhv,   %s, s\\_%x,  Nullgv, \"\", (PADLIST *)s\\_%x, (CV*)s\\_%x, 0x%x, 0x%x",
+			    $xpvcv_ix, length($pv), $pvsym, $ourstash,
 			    $startfield, ${$cv->ROOT}, $cv->DEPTH,
-			    $$padlist, ${$cv->OUTSIDE}, $cv->OUTSIDE_SEQ, $cv->CvFLAGS));
+			    $$padlist ? sprintf("s\\_%x",$$padlist) : "NULL",
+                            ${$cv->OUTSIDE}, $cv->OUTSIDE_SEQ, $cv->CvFLAGS));
     } else {
       #                                 pv cur len off nv magic mg_stash cv_stash start root xsub xsubany cv_gv cv_file cv_depth cv_padlist cv_outside cv_flags outside_seq
       $symsect->add(sprintf("XPVCVIX%d\t%s, %u, 0, %d, %s, 0, Nullhv, Nullhv, %s, s\\_%x, $xsub, $xsubany, Nullgv, \"\", %d, s\\_%x, (CV*)s\\_%x, 0x%x, 0x%x",
@@ -2169,12 +2179,11 @@ sub save_context
  my $inc_hv     = svref_2object(\%INC)->save;
  my $inc_av     = svref_2object(\@INC)->save;
  my $amagic_generate = amagic_generation;
- # causes PL_curpad assertions
  $init->add("/* save context */",
 	    "GvHV(PL_incgv) = $inc_hv;",
 	    "GvAV(PL_incgv) = $inc_av;",
-	    # panic: illegal pad
 	    "PL_curpad = AvARRAY($curpad_sym);",
+	    "PL_comppad = $curpad_sym;",  # fixed "panic: illegal pad"
 	    "av_store(CvPADLIST(PL_main_cv), 0, SvREFCNT_inc($curpad_nam));",
 	    "av_store(CvPADLIST(PL_main_cv), 1, SvREFCNT_inc($curpad_sym));",
 	    "PL_amagic_generation = $amagic_generate;" );
@@ -2568,7 +2577,6 @@ help make use of this compiler.
 Plenty. Current status: experimental.
 
   5.10+5.11:
-    failing pregcomp()
     pad panics and assertions
     tie FETCH error
 

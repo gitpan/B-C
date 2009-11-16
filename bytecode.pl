@@ -141,7 +141,8 @@ int bytecode_header_check(pTHX_ struct byteloader_state *bstate, U32 *isjit) {
     BGET_U32(sz); /* Magic: 'PLBC' or 'PLJC' */
     if (sz != 0x43424c50) {
         if (sz != 0x434a4c50) {
-	    HEADER_FAIL1("bad magic (want 0x43424c50 PLBC or 0x434a4c50 PLJC, got %#x)", (int)sz);
+	    HEADER_FAIL1("bad magic (want 0x43424c50 PLBC or 0x434a4c50 PLJC, got %#x)",
+		         (int)sz);
 	} else {
 	    *isjit = 1;
         }
@@ -823,8 +824,10 @@ __END__
 0 op_nextop	cLOOP->op_nextop			opindex
 0 op_lastop	cLOOP->op_lastop			opindex
 0 cop_label	cCOP					pvindex		x
-i cop_stashpv	cCOP					pvindex		x
-i cop_file	cCOP					pvindex		x
+#ifdef USE_ITHREADS
+0 cop_stashpv	cCOP					pvindex		x
+0 cop_file	cCOP					pvindex		x
+#endif
 # /* those two are ignored, but keep .plc compat for 5.8 only? */
 #ifndef USE_ITHREADS
 0 cop_stash	cCOP					svindex		x
