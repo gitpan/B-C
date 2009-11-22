@@ -260,13 +260,12 @@ enum {
     INSN_DATA,			/* 137 */
     INSN_INCAV,			/* 138 */
     INSN_LOAD_GLOB,			/* 139 */
-    INSN_REGEX_PADAV,			/* 140 */
-    INSN_DOWARN,			/* 141 */
-    INSN_COMPPAD_NAME,			/* 142 */
-    INSN_XGV_STASH,			/* 143 */
-    INSN_SIGNAL,			/* 144 */
-    INSN_FORMFEED,			/* 145 */
-    MAX_INSN = 145
+    INSN_DOWARN,			/* 140 */
+    INSN_COMPPAD_NAME,			/* 141 */
+    INSN_XGV_STASH,			/* 142 */
+    INSN_SIGNAL,			/* 143 */
+    INSN_FORMFEED,			/* 144 */
+    MAX_INSN = 144
 };
 
 enum {

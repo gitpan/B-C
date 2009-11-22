@@ -1,8 +1,6 @@
-Bratislava, 2008-11-08 16:05 MET
-
 =head1 NAME
 
-Need help with the perl compiler, emit C or JIT, blabla
+yapc_bratislava08 - Need help with the perl compiler, emit C or JIT, blabla
 
 =head1 Preparation
 
@@ -253,7 +251,7 @@ compiler (as B::CC), in contrast to the current slow,
 dynamic interpreter.
 
 --
-rurban
+rurban Bratislava, 2008-11-08 16:05 MET
 
 __END__
 Local Variables:

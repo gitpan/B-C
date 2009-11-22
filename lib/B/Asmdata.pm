@@ -164,12 +164,11 @@ $insn_data{defstash} = [136, \&PUT_svindex, "GET_svindex"];
 $insn_data{data} = [137, \&PUT_U8, "GET_U8"];
 $insn_data{incav} = [138, \&PUT_svindex, "GET_svindex"];
 $insn_data{load_glob} = [139, \&PUT_svindex, "GET_svindex"];
-$insn_data{regex_padav} = [140, \&PUT_svindex, "GET_svindex"];
-$insn_data{dowarn} = [141, \&PUT_U8, "GET_U8"];
-$insn_data{comppad_name} = [142, \&PUT_svindex, "GET_svindex"];
-$insn_data{xgv_stash} = [143, \&PUT_svindex, "GET_svindex"];
-$insn_data{signal} = [144, \&PUT_strconst, "GET_strconst"];
-$insn_data{formfeed} = [145, \&PUT_svindex, "GET_svindex"];
+$insn_data{dowarn} = [140, \&PUT_U8, "GET_U8"];
+$insn_data{comppad_name} = [141, \&PUT_svindex, "GET_svindex"];
+$insn_data{xgv_stash} = [142, \&PUT_svindex, "GET_svindex"];
+$insn_data{signal} = [143, \&PUT_strconst, "GET_strconst"];
+$insn_data{formfeed} = [144, \&PUT_svindex, "GET_svindex"];
 
 my ($insn_name, $insn_data);
 while (($insn_name, $insn_data) = each %insn_data) {

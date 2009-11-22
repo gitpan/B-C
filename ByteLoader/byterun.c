@@ -1446,17 +1446,8 @@ byterun(pTHX_ struct byteloader_state *bstate)
 		break;
 	    }
 #ifdef USE_ITHREADS
-	  case INSN_REGEX_PADAV:		/* 140 */
-	    {
-		svindex arg;
-		BGET_svindex(arg);
-		DEBUG_v(Perl_deb(aTHX_ "(insn %3d) regex_padav svindex:0x%x, ix:%d\n", insn, arg, ix));
-		*(SV**)&PL_regex_padav = arg;
-		DEBUG_v(Perl_deb(aTHX_ "	   *(SV**)&PL_regex_padav = arg;\n"));
-		break;
-	    }
 #endif
-	  case INSN_DOWARN:		/* 141 */
+	  case INSN_DOWARN:		/* 140 */
 	    {
 		U8 arg;
 		BGET_U8(arg);
@@ -1465,7 +1456,7 @@ byterun(pTHX_ struct byteloader_state *bstate)
 		DEBUG_v(Perl_deb(aTHX_ "	   PL_dowarn = arg;\n"));
 		break;
 	    }
-	  case INSN_COMPPAD_NAME:		/* 142 */
+	  case INSN_COMPPAD_NAME:		/* 141 */
 	    {
 		svindex arg;
 		BGET_svindex(arg);
@@ -1474,7 +1465,7 @@ byterun(pTHX_ struct byteloader_state *bstate)
 		DEBUG_v(Perl_deb(aTHX_ "	   *(SV**)&PL_comppad_name = arg;\n"));
 		break;
 	    }
-	  case INSN_XGV_STASH:		/* 143 */
+	  case INSN_XGV_STASH:		/* 142 */
 	    {
 		svindex arg;
 		BGET_svindex(arg);
@@ -1483,7 +1474,7 @@ byterun(pTHX_ struct byteloader_state *bstate)
 		DEBUG_v(Perl_deb(aTHX_ "	   *(SV**)&GvSTASH(bstate->bs_sv) = arg;\n"));
 		break;
 	    }
-	  case INSN_SIGNAL:		/* 144 */
+	  case INSN_SIGNAL:		/* 143 */
 	    {
 		strconst arg;
 		BGET_strconst(arg, 0);
@@ -1492,7 +1483,7 @@ byterun(pTHX_ struct byteloader_state *bstate)
 		DEBUG_v(Perl_deb(aTHX_ "	   BSET_signal(bstate->bs_sv, arg)\n"));
 		break;
 	    }
-	  case INSN_FORMFEED:		/* 145 */
+	  case INSN_FORMFEED:		/* 144 */
 	    {
 		svindex arg;
 		BGET_svindex(arg);
