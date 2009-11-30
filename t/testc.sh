@@ -51,17 +51,24 @@ function ctest {
     vcmd $CCMD $o.c $LCMD -o $o
     test -x $o || exit
     echo "./$o"
-    res=$(./$o)
-    test "X$res" = "X${result[$n]}" || echo "./$o failed. '$str' => '$res' Expected: '${result[$n]}'"
-    test "X$res" = "X${result[$n]}" && echo "./$o ok. '$str' => '$res'" && (
+    res=$(./$o) || exit
+    if [ "X$res" = "X${result[$n]}" ]; then
+	test "X$res" = "X${result[$n]}" && echo "./$o ok. '$str' => '$res'"
 	vcmd ${OCMD2}-o${o}_o.c $o.pl
 	$CCMD ${o}_o.c $LCMD -o ${o}_o
 	test -x ${o}_o || exit
 	echo "./${o}_o"
 	res=$(./${o}_o)
-	test "X$res" = "X${result[$n]}" || echo "./${o}_o -O2 failed. '$str' => '$res' Expected: '${result[$n]}'"
-	test "X$res" = "X${result[$n]}" && echo "./${o}_o -O2 ok. '$str' => '$res'"
-    )
+	if [ "X$res" = "X${result[$n]}" ]; then
+	    test "X$res" = "X${result[$n]}" && echo "./${o}_o -O2 ok. '$str' => '$res'"
+	else
+	    echo "./${o}_o -O2 failed. '$str' => '$res' Expected: '${result[$n]}'"
+	fi
+	true
+    else
+	echo "./$o failed. '$str' => '$res' Expected: '${result[$n]}'"
+	exit
+    fi
 }
 
 declare -a tests[19]
@@ -116,8 +123,8 @@ tests[20]='$a="abcd123";my $r=qr/\d/;print $a =~ $r;'
 result[20]='1';
 tests[21]='sub skip_on_odd{next NUMBER if $_[0]% 2}NUMBER:for($i=0;$i<5;$i++){skip_on_odd($i);print $i;}'
 result[21]='024';
-#tests[21]='BEGIN{tie @a, __PACKAGE__;sub TIEARRAY {bless{}}}; sub FETCH{1}; print $a[1]'
-#result[21]='1';
+tests[22]='my $fh; BEGIN { open($fh,"<","/dev/null"); } print "ok";';
+result[22]='ok';
 
 make
 
@@ -127,7 +134,7 @@ if [ -n "$1" ]; then
     shift
   done
 else
-  for b in $(seq -f"%02.0f" 21); do
+  for b in $(seq -f"%02.0f" 22); do
     ctest $b
   done
 fi
