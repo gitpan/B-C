@@ -679,7 +679,7 @@ __END__
 %number 0
 #
 # The argtype is either a single type or "rightvaluecast/argtype".
-# The version is either "i" or "!i" for ithreads or not, 
+# The version is either "i" or "!i" for ithreads or not,
 # or num, num-num, >num or <num.
 # "0" is for all, "<10" requires PERL_VERSION<10, "10" requires
 # PERL_VERSION>=10, ">10" requires PERL_VERSION>10
@@ -711,8 +711,8 @@ __END__
 0 xpv_cur	bstate->bs_sv	 			STRLEN		x
 0 xpv_len	bstate->bs_sv				STRLEN		x
 8 xiv		bstate->bs_sv				IV		x
-<8 xiv32	bstate->bs_sv				I32
-<8 xiv64	bstate->bs_sv				IV64
+<8 xiv32	SvIVX(bstate->bs_sv)			I32
+<8 xiv64	SvIVX(bstate->bs_sv)			IV64
 0 xnv		bstate->bs_sv				NV		x
 0 xlv_targoff	LvTARGOFF(bstate->bs_sv)		STRLEN
 0 xlv_targlen	LvTARGLEN(bstate->bs_sv)		STRLEN
@@ -814,6 +814,7 @@ __END__
 #endif
 0   pregcomp	PL_op					pvcontents	x
 0   op_pmflags	cPMOP->op_pmflags			U16
+10  op_reflags  RX_EXTFLAGS(PM_GETRE(cPMOP))		U32
 <10 op_pmpermflags cPMOP->op_pmpermflags		U16
 <10 op_pmdynflags  cPMOP->op_pmdynflags			U8
 0 op_sv		cSVOP->op_sv				svindex

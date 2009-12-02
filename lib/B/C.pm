@@ -9,7 +9,7 @@
 
 package B::C;
 
-our $VERSION = '1.04_25';
+our $VERSION = '1.04_26';
 
 package B::C::Section;
 
@@ -176,7 +176,8 @@ use B
   HEf_SVKEY SVf_POK SVf_ROK);
 BEGIN {
   if ($] >=  5.008) {
-    B->import(qw(regex_padav CVf_CONST)); #both unsupported for 5.6
+    @B::NV::ISA = 'B::IV';		  # add IVX to nv. This fixes test 23 for Perl 5.8
+    B->import(qw(regex_padav CVf_CONST)); # both unsupported for 5.6
   }
 }
 use B::Asmdata qw(@specialsv_name);
@@ -469,7 +470,7 @@ my $opsect_common =
 
   sub B::OP::_save_common_middle {
     my $op = shift;
-    my $madprop = $MAD ? "/*madprop*/0," : "";
+    my $madprop = $MAD ? "0," : "";
     sprintf( "%s,%s %u, %u, $static, 0x%x, 0x%x",
       $op->fake_ppaddr, $madprop, $op->targ, $op->type, $op->flags,
       $op->private );
@@ -771,8 +772,8 @@ sub B::COP::save {
     if ( $op->label ) {
       $init->add(
         sprintf(
-          "CopLABEL_alloc(&cop_list[%d], %s);",
-          $copsect->index, cstring( $op->label )
+          "cop_list[%d].cop_hints_hash = Perl_store_cop_label(aTHX_ cop_list[%d].cop_hints_hash, %s);",
+          $copsect->index, $copsect->index, cstring( $op->label )
         )
       );
     }
@@ -901,8 +902,9 @@ sub B::PMOP::save {
       my $resym = cstring($re);
       my $relen = length($re);
       $init->add(
-        sprintf( "PM_SETRE(&$pm, CALLREGCOMP(newSVpvn($resym, $relen), %u));",
-		 $op->pmflags )
+        sprintf("PM_SETRE(&$pm, CALLREGCOMP(newSVpvn($resym, $relen), %u));",
+		$op->pmflags ),
+        sprintf("RX_EXTFLAGS(PM_GETRE(&$pm)) = 0x%x;", $op->reflags )
       );
     }
     elsif ($PERL56) {
@@ -914,7 +916,6 @@ sub B::PMOP::save {
     }
     else { # 5.8
       my ( $resym, $relen ) = savere( $re, 0 );
-      # $init->add(sprintf("PM_SETRE(&$pm, pregcomp($resym, $resym + %u, &$pm));", $relen));
       $init->add(
         sprintf(
           "PM_SETRE(&$pm, CALLREGCOMP(aTHX_ $resym, $resym + %u, &$pm));",
@@ -984,8 +985,8 @@ sub B::NV::save {
   return $sym if defined $sym;
   my $val = $sv->NVX;
   $val .= '.00' if $val =~ /^-?\d+$/;
-  if ($PERL510) {
-    $xpvnvsect->add( sprintf( "%s, 0, 0, %d", $val, $sv->IVX ) );
+  if ($PERL510) { # not fixed by NV isa IV >= 5.8
+    $xpvnvsect->add( sprintf( "%s, 0, 0, 0", $val ) );
   }
   else {
     $xpvnvsect->add( sprintf( "0, 0, 0, %d, %s", $sv->IVX, $val ) );
@@ -996,8 +997,8 @@ sub B::NV::save {
       $xpvnvsect->index, $sv->REFCNT, $sv->FLAGS
     )
   );
-  warn sprintf( "Saving NV %d %s to xpvnv_list[%d], sv_list[%d]",
-    $sv->IVX, $val, $xpvnvsect->index, $svsect->index )
+  warn sprintf( "Saving NV %s to xpvnv_list[%d], sv_list[%d]",
+    $val, $xpvnvsect->index, $svsect->index )
     if $debug{sv};
   savesym( $sv, sprintf( "&sv_list[%d]", $svsect->index ) );
 }
@@ -1176,6 +1177,9 @@ sub B::BM::save {
   }
   $init->add(
     sprintf( "xpvbm_list[%d].xpv_cur = %u;", $xpvbmsect->index, $len - 257 ) );
+  # TODO fbm_compile since 5.8 is doing something we haven't caught yet
+  $init->add(
+    sprintf( "fbm_compile(&sv_list[%d], 0);", $svsect->index) ) unless $PERL56;
   savesym( $sv, sprintf( "&sv_list[%d]", $svsect->index ) );
 }
 
@@ -1281,13 +1285,15 @@ sub B::PVMG::save_magic {
       };
     }
 
-    unless ( $type eq 'r' ) {
+    unless ( $type eq 'r' ) { # FIXME test 23
       $obj = $mg->OBJ;
-      $obj->save;
+      # 5.10: Can't call method "save" on unblessed reference: perl -Mblib script/perlcc t/c.t
+      #warn "Save MG ". $obj . "\n" if $PERL510;
+      $obj->save
+        unless $PERL510 and ref $obj eq 'SCALAR';
     }
 
     if ( $len == HEf_SVKEY ) {
-
       #The pointer is an SV*
       $ptrsv = svref_2object($ptr)->save;
       $init->add(
@@ -2673,7 +2679,7 @@ sub delete_unsaved_hashINC {
   my $packname = shift;
   $packname =~ s/\:\:/\//g;
   $packname .= '.pm';
-  warn "deleting $packname\n" if $INC{$packname} and $debug{pkg};
+  warn "Deleting $packname\n" if $INC{$packname} and $debug{pkg};
   delete $INC{$packname};
 }
 
@@ -2686,9 +2692,7 @@ sub walkpackages {
   while ( ( $sym, $ref ) = each %$symref ) {
     local (*glob);
     *glob = $ref;
-    if ($sym =~ /^main::/ and $debug{p}) {
-      warn("walkpackages $sym");
-    }
+    warn("Walkpackages $sym") if $debug{p};
     if ( $sym =~ /::$/ ) {
       $sym = $prefix . $sym;
       # XXX The walker was missing main subs to avoid recursion into O compiler subs again
@@ -3090,7 +3094,11 @@ debugger at the early CHECK step, where the compilation happens.
 
 =item B<-Do>
 
-OPs, prints each OP as it's processed
+All Walkop'ed OPs
+
+=item B<-DO>
+
+OP Type,Flags,Private
 
 =item B<-DS>
 
@@ -3124,7 +3132,7 @@ prints cached package information, if used or not.
 
 do not print -D information when parsing for the unused subs.
 
-=item B<-f>
+=item B<-f>I<OPTIM>
 
 Force options/optimisations on or off one at a time. You can explicitly
 disable an option using B<-fno-option>. All options default to
@@ -3206,17 +3214,26 @@ help make use of this compiler.
 
 =head1 BUGS
 
-2 or 3. Current status: experimental.
+3-4. Current status: experimental.
 
-  5.6:
-    none
-  5.8:
-    XSUB load order via B::Stash
-    qr// in main fails, within subs ok
-  5.10+5.11:
-    calling subs via GvGP fails (sort $a)
-    autoload subs
-    tie FETCH error
+5.6:
+    reading from __DATA__ handles (15)
+    calling nested subs (24)
+    XSUB load order via B::Stash (?)
+
+5.8:
+    +
+    open our (14)
+    $VERSION magic (23)
+
+5.10:
+    +
+    sort by key (18)
+    qr// in main (20)
+    loop in sub (21)
+
+5.11:
+    4-5, 14-16, 21, 23
 
 =head1 AUTHOR
 

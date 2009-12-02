@@ -233,40 +233,41 @@ enum {
     INSN_OP_PMREPLROOTGV,			/* 110 */
     INSN_PREGCOMP,			/* 111 */
     INSN_OP_PMFLAGS,			/* 112 */
-    INSN_OP_SV,			/* 113 */
-    INSN_OP_PADIX,			/* 114 */
-    INSN_OP_PV,			/* 115 */
-    INSN_OP_PV_TR,			/* 116 */
-    INSN_OP_REDOOP,			/* 117 */
-    INSN_OP_NEXTOP,			/* 118 */
-    INSN_OP_LASTOP,			/* 119 */
-    INSN_COP_LABEL,			/* 120 */
-    INSN_COP_STASHPV,			/* 121 */
-    INSN_COP_FILE,			/* 122 */
-    INSN_COP_STASH,			/* 123 */
-    INSN_COP_FILEGV,			/* 124 */
-    INSN_COP_SEQ,			/* 125 */
-    INSN_COP_LINE,			/* 126 */
-    INSN_COP_WARNINGS,			/* 127 */
-    INSN_MAIN_START,			/* 128 */
-    INSN_MAIN_ROOT,			/* 129 */
-    INSN_MAIN_CV,			/* 130 */
-    INSN_CURPAD,			/* 131 */
-    INSN_PUSH_BEGIN,			/* 132 */
-    INSN_PUSH_INIT,			/* 133 */
-    INSN_PUSH_END,			/* 134 */
-    INSN_CURSTASH,			/* 135 */
-    INSN_DEFSTASH,			/* 136 */
-    INSN_DATA,			/* 137 */
-    INSN_INCAV,			/* 138 */
-    INSN_LOAD_GLOB,			/* 139 */
-    INSN_REGEX_PADAV,			/* 140 */
-    INSN_DOWARN,			/* 141 */
-    INSN_COMPPAD_NAME,			/* 142 */
-    INSN_XGV_STASH,			/* 143 */
-    INSN_SIGNAL,			/* 144 */
-    INSN_FORMFEED,			/* 145 */
-    MAX_INSN = 145
+    INSN_OP_REFLAGS,			/* 113 */
+    INSN_OP_SV,			/* 114 */
+    INSN_OP_PADIX,			/* 115 */
+    INSN_OP_PV,			/* 116 */
+    INSN_OP_PV_TR,			/* 117 */
+    INSN_OP_REDOOP,			/* 118 */
+    INSN_OP_NEXTOP,			/* 119 */
+    INSN_OP_LASTOP,			/* 120 */
+    INSN_COP_LABEL,			/* 121 */
+    INSN_COP_STASHPV,			/* 122 */
+    INSN_COP_FILE,			/* 123 */
+    INSN_COP_STASH,			/* 124 */
+    INSN_COP_FILEGV,			/* 125 */
+    INSN_COP_SEQ,			/* 126 */
+    INSN_COP_LINE,			/* 127 */
+    INSN_COP_WARNINGS,			/* 128 */
+    INSN_MAIN_START,			/* 129 */
+    INSN_MAIN_ROOT,			/* 130 */
+    INSN_MAIN_CV,			/* 131 */
+    INSN_CURPAD,			/* 132 */
+    INSN_PUSH_BEGIN,			/* 133 */
+    INSN_PUSH_INIT,			/* 134 */
+    INSN_PUSH_END,			/* 135 */
+    INSN_CURSTASH,			/* 136 */
+    INSN_DEFSTASH,			/* 137 */
+    INSN_DATA,			/* 138 */
+    INSN_INCAV,			/* 139 */
+    INSN_LOAD_GLOB,			/* 140 */
+    INSN_REGEX_PADAV,			/* 141 */
+    INSN_DOWARN,			/* 142 */
+    INSN_COMPPAD_NAME,			/* 143 */
+    INSN_XGV_STASH,			/* 144 */
+    INSN_SIGNAL,			/* 145 */
+    INSN_FORMFEED,			/* 146 */
+    MAX_INSN = 146
 };
 
 enum {
