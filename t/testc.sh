@@ -1,24 +1,27 @@
 #!/bin/bash
-# Beware that now the order of args -c -D -B is hardcoded
+# Beware that the order of OPTIONS -q -c -D -B is hardcoded.
 # t/testc.sh -c -D u,-q -B static 2>&1 |tee c.log|grep FAIL
 #
 # use the actual perl from the Makefile (perl5.8.8, 
 # perl5.10.0d-nt, perl5.11.0, ...)
 PERL=`grep "^PERL =" Makefile|cut -c8-`
 PERL=${PERL:-perl}
-# if $] < 5.9 you may want to remove -Mblib
-# OCMD="$PERL -Mblib -MO=C,-DcACMSG,"
+# if $] < 5.9 you may want to remove -Mblib for testing the core lib
 #Mblib="`$PERL -e'print (($] < 5.009005) ? q() : q(-Mblib))'`"
-Mblib="-Mblib" # B::C is now 5.6+5.8 backwards compatible
+Mblib="-Mblib" # B::C is now fully 5.6+5.8 backwards compatible
 if [ -z $Mblib ]; then VERS="${VERS}_global"; fi
 BASE=`basename $0`
-OCMD="$PERL $Mblib -MO=C,-DcOACMSGp,-v," 
+OCMD="$PERL $Mblib -MO=C,-DcOACMSGpu,-v,-uversion,-uRegexp,"
 if [ $BASE = "testcc.sh" ]; then 
-  OCMD="$PERL $Mblib -MO=CC,-DoOscprSql,-v,"
+  OCMD="$(echo $OCMD|sed -e 's/O=C,-D.*,-v/-DoOscprSql,-v/')" 
+  #OCMD="$PERL $Mblib -MO=CC,-DoOscprSql,-v,-uversion,-uRegexp,"
 fi
-OCMD2="$PERL $Mblib -MO=C,-O2," 
+OCMDO1="$PERL $Mblib -MO=C,-O1,-uversion,-uRegexp," 
+OCMDO2="$PERL $Mblib -MO=C,-O2,-uversion,-uRegexp," 
 if [ $BASE = "testcc.sh" ]; then 
-  OCMD2="$PERL $Mblib -MO=CC,-O2,"
+  OCMDO1="$(echo $OCMDO1|sed -e 's/O=C,/O=CC,/')" 
+  OCMDO2="$(echo $OCMDO2|sed -e 's/O=C,/O=CC,/')" 
+  #OCMDO1="$PERL $Mblib -MO=CC,-O1,-uversion,-uRegexp,"
 fi
 CONT=
 # 5.6: rather use -B static
@@ -29,7 +32,7 @@ LCMD=
 # On some perls I also had to add $archlib/DynaLoader/DynaLoader.a to libs in Config.pm
 
 function vcmd {
-    echo $*
+    test -n "$QUIET" || echo $*
     $*
 }
 
@@ -64,6 +67,7 @@ function ctest {
     else
 	echo "$str" > ${o}.pl
     fi
+    rm $o.c $o ${o}_o2.c ${o}_o2 ${o}_o1.c ${o}_o1 2> /dev/null
     vcmd ${OCMD}-o$o.c $o.pl
     vcmd $CCMD $o.c -c -E -o ${o}_E.c
     vcmd $CCMD $o.c $LCMD -o $o
@@ -71,16 +75,26 @@ function ctest {
     echo "./$o"
     res=$(./$o) || (test -z $CONT && exit)
     if [ "X$res" = "X${result[$n]}" ]; then
-	test "X$res" = "X${result[$n]}" && pass "./$o" "'$str' => '$res'"
-	vcmd ${OCMD2}-o${o}_o.c $o.pl
-	$CCMD ${o}_o.c $LCMD -o ${o}_o
-	test -x ${o}_o || (test -z $CONT && exit)
-	echo "./${o}_o"
-	res=$(./${o}_o)
+	pass "./$o" "'$str' => '$res'"
+	vcmd ${OCMDO1}-o${o}_o1.c $o.pl
+	$CCMD ${o}_o1.c $LCMD -o ${o}_o1
+	test -x ${o}_o1 || (test -z $CONT && exit)
+	echo "./${o}_o1"
+	res=$(./${o}_o1)
 	if [ "X$res" = "X${result[$n]}" ]; then
-	    test "X$res" = "X${result[$n]}" && pass "./${o}_o -O2" "'$str' => '$res'"
+	    test "X$res" = "X${result[$n]}" && pass "./${o}_o1" "=> '$res'"
 	else
-            fail "./${o}_o -O2" "'$str' => '$res' Expected: '${result[$n]}'"
+            fail "./${o}_o1" "=> '$res' Expected: '${result[$n]}'"
+	fi
+	vcmd ${OCMDO2}-o${o}_o2.c $o.pl
+	$CCMD ${o}_o2.c $LCMD -o ${o}_o2
+	test -x ${o}_o2 || (test -z $CONT && exit)
+	echo "./${o}_o2"
+	res=$(./${o}_o2)
+	if [ "X$res" = "X${result[$n]}" ]; then
+	    test "X$res" = "X${result[$n]}" && pass "./${o}_o2" "=> '$res'"
+	else
+            fail "./${o}_o2" "=> '$res' Expected: '${result[$n]}'"
 	fi
 	true
     else
@@ -89,8 +103,9 @@ function ctest {
     fi
 }
 
-declare -a tests[24]
-declare -a result[24]
+ntests=26
+declare -a tests[$ntests]
+declare -a result[$ntests]
 tests[1]="print 'hi'"
 result[1]='hi';
 tests[2]="for (1,2,3) { print if /\d/ }"
@@ -152,13 +167,29 @@ result[22]='ok';
 tests[23]='package MyMod; our $VERSION = 1.3; print "ok";'
 result[23]='ok'
 # works in original perl 5.6, broken with latest B::C in 5.6, 5.8
-tests[24]='sub level1 { return (level2() ? "fail" : "ok") }  sub level2 {0}  print level1();'
+tests[24]='sub level1{return(level2()?"fail":"ok")} sub level2{0} print level1();'
 result[24]='ok'
-
-make
+# enforce custom ncmp sort and count it. fails as CC in all. How to enforce icmp?
+# <=5.6 qsort needs two more passes here than >=5.8 merge_sort
+tests[25]='print sort { print $i++," "; $b <=> $a } 1..4'
+result[25]="0 1 2 3`$PERL -e'print (($] < 5.007) ? q( 4 5) : q())'` 4321";
+# lvalue
+tests[26]='sub a:lvalue{my $a=26; ${\(bless \$a)}}sub b:lvalue{${\shift}}; print ${a(b)}';
+result[26]="26";
 
 # 
-# TODO: getopts for -Du,-q -w -v
+# TODO: getopts for -q -Du,-q -w -v
+if [ "$1" = "-q" ]; then 
+    QUIET=1;
+    # O from 5.6 does not support -qq
+    qq="`$PERL -e'print (($] < 5.007) ? q() : q(-qq,))'`"
+    # replace -D*,-v by -q 
+    OCMD="$(echo $OCMD|sed -e 's/-D.*,-v,/-q,/' -e s/-MO=/-MO=$qq/)" 
+    OCMDO1="$(echo $OCMDO1|sed -e s/-v,/-q,/ -e s/-MO=/-MO=$qq/)"
+    OCMDO2="$(echo $OCMDO2|sed -e s/-v,/-q,/ -e s/-MO=/-MO=$qq/)"
+    CCMD="$PERL script/cc_harness -q -g3 -Bdynamic"
+    shift; 
+fi
 if [ "$1" = "-c" ]; then CONT=1; shift; fi
 # -D options: u,-q for quiet, no -D for verbose
 if [ "$1" = "-D" ]; then 
@@ -173,13 +204,18 @@ if [ "$1" = "-B" ]; then
     CCMD="$PERL script/cc_harness -g3 -B${2}"
     shift; shift
 fi
+if [ -z "$QUIET" ]; then
+    make
+else
+    make >/dev/null
+fi
 if [ -n "$1" ]; then
   while [ -n "$1" ]; do
     ctest $1
     shift
   done
 else
-  for b in $(seq -f"%02.0f" 24); do
+  for b in $(seq -f"%02.0f" $ntests); do
     ctest $b
   done
 fi

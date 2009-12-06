@@ -1,7 +1,7 @@
 #!./perl
-my $keep_c      = 0;	# set it to keep the c and exe files
-my $keep_c_fail = 1;	# set it to keep the c and exe files on failures. 
-# better use testcc.sh for debugging
+my $keep_c      = 0;	# set it to keep the pl, c and exe files
+my $keep_c_fail = 1;	# set it to keep the pl, c and exe files on failures
+# better use testc.sh for debugging
 use Config;
 
 BEGIN {
@@ -14,7 +14,7 @@ BEGIN {
 	@INC = ('.', '../lib');
     } else {
 	unshift @INC, 't';
-	push @INC, "blib/arch", "blib/lib";
+	#push @INC, "blib/arch", "blib/lib";
     }
     if (($Config{'extensions'} !~ /\bB\b/) ){
         print "1..0 # Skip -- Perl configured without B module\n";
@@ -31,11 +31,10 @@ my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
 my $ITHREADS  = ($Config{useithreads});
 
 my @tests = tests();
-# 8,11,14..16,18..19 fail on 5.00505 + 5.6, old core failures
-my @todo = (14,15,18,21,23,25); #5.8.9
-@todo = (15,18,21,25) if $] < 5.007;
-@todo = (11,12,14..16,18,20,21,23,25) if $] >= 5.010;
-@todo = (5,10..12,14..16,18,21,23,25) if $] >= 5.011;
+my @todo = (14,15,23); #5.8
+@todo = (15,24,25) if $] < 5.007;
+@todo = (5,10..20,22..23) if $] >= 5.010;
+@todo = (5,10..23) if $] >= 5.011;
 
 my %todo = map { $_ => 1 } @todo;
 
@@ -45,5 +44,5 @@ my $cnt = 1;
 for (@tests) {
   my $todo = $todo{$cnt} ? "#TODO" : "#";
   my ($script, $expect) = split />>>+\n/;
-  run_cc_test($cnt++, "CC", $script, $expect, $keep_c, $keep_c_fail, $todo);
+  run_cc_test($cnt++, "C,-O2", $script, $expect, $keep_c, $keep_c_fail, $todo);
 }
