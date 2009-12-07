@@ -1,10 +1,12 @@
-#!./perl
+#! /usr/bin/env perl
 my $keep_pl       = 0;	# set it to keep the src pl files
 my $keep_plc      = 0;	# set it to keep the bytecode files
 my $keep_plc_fail = 1;	# set it to keep the bytecode files on failures
 my $do_coverage = undef;# do bytecode insn coverage
-# better use t/testplc.sh for debugging
+my $verbose       = $ENV{TEST_VERBOSE}; # better use t/testplc.sh for debugging
 use Config;
+
+# Debugging Note: perl5.6.2 has no -Dvl, use -D260 (256+4) instead. v mapped to f
 
 BEGIN {
     if ($^O eq 'VMS') {
@@ -22,10 +24,10 @@ BEGIN {
         print "1..0 # Skip -- Perl configured without B module\n";
         exit 0;
     }
-    if ($Config{ccflags} =~ /-DPERL_COPY_ON_WRITE/) {
-	print "1..0 # skip - no COW for now\n";
-	exit 0;
-    }
+    #if ($Config{ccflags} =~ /-DPERL_COPY_ON_WRITE/) {
+    #	print "1..0 # skip - no COW for now\n";
+    #	exit 0;
+    #}
     require 'test.pl'; # for run_perl()
 }
 use strict;
@@ -50,31 +52,35 @@ if ($DEBUGGING) {
   }
   #@todo = (9..10, 12) if $] > 5.009;
   #@todo = (7, 11, 15) if ($] >= 5.010 and $] < 5.011 and !$ITHREADS);
-  #@todo = (4, 9..12, 15..16) if $] >= 5.011;
+  @todo = (3..5,7,9..12,20) if ($] >= 5.010 and $] < 5.011 and !$ITHREADS);
+  @todo = (5,9..12,16,20..21) if $] >= 5.011;
 } else {
   #@todo = (2..11, 13..16, 18..19) if $] > 5.009;
   #@todo = (2..5, 7, 11) if $] > 5.009;
   #@todo = (4,11,16) if ($] >= 5.011 and !$ITHREADS);
 }
+@todo = (3,6,8..10,12,15..16,18,25..26) if $] < 5.007; # CORE failures (ours not yet enabled)
+
 my %todo = map { $_ => 1 } @todo;
-my $Mblib = "-Mblib"; # TODO some switch to test older perls (core tests disabled since 1.04_27)
-unless ($Mblib) {
+my $Mblib = $] >= 5.009005 ? "-Mblib" : ""; # test also the CORE B in older perls
+$Mblib = "-Mblib";
+unless ($Mblib) { # check for -Mblib from the testsuite
   if ($INC[1] =~ m|blib/arch$| and $INC[2] =~ m|blib/lib|) {
     $Mblib = "-Mblib"; # forced -Mblib via cmdline
   }
 }
-# my $Bytecode = $] >= 5.007 ? 'Bytecode' : 'Bytecode56';
+#$Bytecode = $] >= 5.007 ? 'Bytecode' : 'Bytecode56';
+$Mblib = '' if $] < 5.007; # override harness on 5.6. No Bytecode for 5.6 for now.
 for (@tests) {
   my $todo = $todo{$cnt} ? "#TODO " : "#";
-  my $got;
-  my @insn;
+  my ($got, @insn);
   my ($script, $expect) = split />>>+\n/;
   $expect =~ s/\n$//;
   $test = "bytecode$cnt.pl";
   open T, ">$test"; print T $script; close T;
   unlink "${test}c" if -e "${test}c";
   $got = run_perl(switches => [ "$Mblib -MO=Bytecode,-o${test}c" ],
-		  verbose  => 0, # for DEBUGGING
+		  verbose  => $verbose, # for DEBUGGING
 		  nolib    => $ENV{PERL_CORE} ? 0 : 1, # include ../lib only in CORE
 		  stderr   => 1, # to capture the "bytecode.pl syntax ok"	
 		  progfile => $test);

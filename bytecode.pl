@@ -107,7 +107,7 @@ print BYTERUN_C $c_header, <<'EOT';
   #define PL_tokenbuf		(PL_parser->tokenbuf)
 #endif
 #if (PERL_VERSION < 8) && (!defined(DEBUG_v))
-  #define DEBUG_v(a) DEBUG_l(a)
+  #define DEBUG_v(a) DEBUG_f(a)
 #endif
 
 #include "byterun.h"
@@ -343,25 +343,36 @@ while (<DATA>) {
 	printf BYTERUN_C "\t\t$argtype arg;\n\t\tBGET_%s(arg);\n", $fundtype;
       }
       printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"(insn %%3d) $insn $argtype:%s\\n\", insn, arg%s));\n",
-	$fundtype =~ /(strconst|pvindex|pvcontents)/ ? '\"%s\"' : ($argtype =~ /index$/ ? '0x%x, ix:%d' : '%d'),
+	$fundtype =~ /(strconst|pvcontents)/ ? '\"%s\"' : ($argtype =~ /index$/ ? '0x%x, ix:%d' : '%d'),
 	($argtype =~ /index$/ ? ', ix' : '');
       if ($fundtype eq 'PV') {
-	printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BGET_PV(arg) => \\\"%%s\\\"\\n\", bstate->bs_pv.xpv_pv));\n";
+	print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BGET_PV(arg) => \\\"%s\\\"\\n\", bstate->bs_pv.xpv_pv));\n";
       }
     } else {
       print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"(insn %3d) $insn\\n\", insn));\n";
     }
     if ($flags =~ /x/) {
       print BYTERUN_C "\t\tBSET_$insn($lvalue$optarg);\n";
-      print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BSET_$insn($lvalue$optarg)\\n\"));\n";
+      printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BSET_$insn($lvalue%s)\\n\"$optarg));\n",
+	$optarg eq ", arg"
+	  ? ($fundtype =~ /(strconst|pvcontents)/ ? ', \"%s\"' : ($argtype =~ /index$/ ? ', 0x%x' : ', %d'))
+	  : '';
     } elsif ($flags =~ /s/) {
       # Store instructions to bytecode_obj_list[arg]. "lvalue" field is rvalue.
       print BYTERUN_C "\t\tBSET_OBJ_STORE($lvalue$optarg);\n";
       print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BSET_OBJ_STORE($lvalue$optarg)\\n\"));\n";
+      #if ($lvalue =~ /bstate->bs_sv/) {
+      #  print BYTERUN_C "\t\tassert(bstate->bs_sv);\n";
+      #}
     }
     elsif ($optarg && $lvalue ne "none") {
       print BYTERUN_C "\t\t$lvalue = ${rvalcast}arg;\n";
-      print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   $lvalue = ${rvalcast}arg;\\n\"));\n";
+      printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   $lvalue = ${rvalcast}%s;\\n\", arg%s));\n",
+	$fundtype =~ /(strconst|pvcontents)/ ? '\"%s\"' : ($argtype =~ /index$/ ? '0x%x' : '%d');
+      #Null_sv
+      #if ($argtype =~ /index$/ and $lvalue =~ /bstate->bs_sv/) {
+      #	print BYTERUN_C "\t\tassert(bstate->bs_sv);\n";
+      #}
     }
     print BYTERUN_C "\t\tbreak;\n\t    }\n";
 
@@ -381,7 +392,7 @@ EOT
 #
 print BYTERUN_C <<'EOT';
 	    default:
-	      Perl_croak(aTHX_ "Illegal bytecode instruction %d. Version incompatibility.\n", insn);
+	      Perl_croak(aTHX_ "Illegal bytecode instruction %d. Version or platform incompatibility. Threading?\n", insn);
 	      /* NOTREACHED */
 	  }
 #ifdef DEBUG_t_TEST_
@@ -827,7 +838,8 @@ __END__
 #endif
 0   pregcomp	PL_op					pvcontents	x
 0   op_pmflags	cPMOP->op_pmflags			U16
-10  op_reflags  RX_EXTFLAGS(PM_GETRE(cPMOP))		U32
+10-10 op_reflags  PM_GETRE(cPMOP)->extflags		U32
+11  op_reflags  RX_EXTFLAGS(PM_GETRE(cPMOP))		U32
 <10 op_pmpermflags cPMOP->op_pmpermflags		U16
 <10 op_pmdynflags  cPMOP->op_pmdynflags			U8
 0 op_sv		cSVOP->op_sv				svindex
