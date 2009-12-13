@@ -9,6 +9,7 @@ typedef char *pvindex;
 /*typedef HEK *hekindex;*/
 typedef IV IV64;
 
+static int force = 0;
 /* need to swab bytes to the target byteorder */
 static int bget_swab = 0;
 
@@ -53,7 +54,7 @@ static int bget_swab = 0;
 		       "Different IVSIZE: .plc %d, perl %d", 		\
 		      bl_header.ivsize, IVSIZE);			\
 	}								\
-	if (bget_swab) {arg = _swab_iv_(arg,IVSIZE);}			\
+	if (bget_swab) {arg = _swab_iv_(arg, IVSIZE);}			\
     } STMT_END
 /*
  * In the following, sizeof(IV)*4 is just a way of encoding 32 on 64-bit-IV
@@ -89,7 +90,7 @@ static int bget_swab = 0;
 		       "EOF or error while trying to read %d bytes for %s", \
 		       bl_header.ivsize, "IV");				\
 	}								\
-	if (bget_swab) { arg = _swab_iv_(arg,bl_header.longsize); }	\
+	if (bget_swab) { arg = _swab_iv_(arg, bl_header.longsize); }	\
 	if (bl_header.longsize != LONGSIZE) {				\
 	    Perl_warn(aTHX_						\
 		       "Different LONGSIZE .plc %d, perl %d",		\
@@ -100,7 +101,7 @@ static int bget_swab = 0;
 /* svtype is an enum of 16 values. 32bit or 16bit? */
 #define BGET_svtype(arg)	STMT_START {	       			\
     BGET_OR_CROAK(arg, svtype);						\
-    if (bget_swab) {arg = _swab_iv_(arg,sizeof(svtype))}                \
+    if (bget_swab) {arg = _swab_iv_(arg, sizeof(svtype))}               \
     } STMT_END
 
 #define BGET_OR_CROAK(arg, type) STMT_START {				\
@@ -245,8 +246,23 @@ static int bget_swab = 0;
 #ifdef USE_ITHREADS
 
 /* copied after the code in newPMOP() */
-#if PERL_VERSION < 10
+#if PERL_VERSION >= 10
+/* see op.c:newPMOP
+ * Must use a SV now. build it on the fly from the given pv. 
+ * rx->extflags is constructed from op_pmflags in pregcomp
+ * | PMf_COMPILETIME removed from op_pmflags to fix substr crashes with empty check_substr
+ * TODO: 5.11 could use newSVpvn_flags with SVf_TEMP
+ */
+#define BSET_pregcomp(o, arg)						\
+    STMT_START {							\
+	assert(SvPOK(PL_regex_pad[0]));					\
+        PM_SETRE(cPMOPx(o), arg						\
+	  ? CALLREGCOMP(newSVpvn(arg, strlen(arg)), cPMOPx(o)->op_pmflags) \
+	  : Null(REGEXP*));						\
+    } STMT_END
 
+#endif
+#if (PERL_VERSION > 7) && (PERL_VERSION < 10)
 #define BSET_pregcomp(o, arg) \
     STMT_START { \
         SV* repointer; \
@@ -266,27 +282,11 @@ static int bget_swab = 0;
         } \
     } STMT_END
 
-#else /* >= 5.10 */
-
-/* see op.c:newPMOP
- * Must use a SV now. build it on the fly from the given pv. 
- * rx->extflags is constructed from op_pmflags in pregcomp
- * | PMf_COMPILETIME removed from op_pmflags to fix substr crashes with empty check_substr
- * TODO: 5.11 could use newSVpvn_flags with SVf_TEMP
- */
-#define BSET_pregcomp(o, arg)						\
-    STMT_START {							\
-	assert(SvPOK(PL_regex_pad[0]));					\
-        PM_SETRE(cPMOPx(o), arg						\
-	  ? CALLREGCOMP(newSVpvn(arg, strlen(arg)), cPMOPx(o)->op_pmflags) \
-	  : Null(REGEXP*));						\
-    } STMT_END
-
 #endif
 
 #else /* ! USE_ITHREADS */
 
-#if PERL_VERSION < 10
+#if (PERL_VERSION >= 8) && (PERL_VERSION < 10)
 /* PM_SETRE only since 5.8 */
 #define BSET_pregcomp(o, arg) \
     STMT_START { \
@@ -294,7 +294,8 @@ static int bget_swab = 0;
 	     CALLREGCOMP(aTHX_ arg, arg + bstate->bs_pv.xpv_cur, cPMOPx(o)): \
 	     Null(REGEXP*))); \
     } STMT_END
-#else
+#endif
+#if (PERL_VERSION >= 10)
 /* | PMf_COMPILETIME removed from op_pmflags to fix substr crashes with empty check_substr */
 #define BSET_pregcomp(o, arg)				\
     STMT_START {					\
@@ -305,6 +306,13 @@ static int bget_swab = 0;
 #endif
 
 #endif /* USE_ITHREADS */
+
+#if PERL_VERSION < 8
+#define BSET_pregcomp(o, arg)	    \
+    ((PMOP*)o)->op_pmregexp = arg ? \
+		CALLREGCOMP(aTHX_ arg, arg + bstate->bs_pv.xpv_cur, ((PMOP*)o)) : 0
+#endif
+
 
 #define BSET_newsv(sv, arg)				\
 	    switch(arg) {				\
@@ -430,12 +438,16 @@ static int bget_swab = 0;
 #ifdef USE_ITHREADS
 #define BSET_cop_file(cop, arg)		CopFILE_set(cop,arg)
 #define BSET_cop_stashpv(cop, arg)	CopSTASHPV_set(cop,arg)
+#define BSET_cop_filegv(cop, arg)	Perl_warn(aTHX_ "cop_filegv with ITHREADS not yet implemented")
+#define BSET_cop_stash(cop,arg)		Perl_warn(aTHX_ "cop_stash with ITHREADS not yet implemented")
 #else
 /* this works now that Sarathy's changed the CopFILE_set macro to do the SvREFCNT_inc()
 	-- BKS 6-2-2000 */
 /* that really meant the actual CopFILEGV_set */
 #define BSET_cop_filegv(cop, arg)	CopFILEGV_set(cop,arg)
 #define BSET_cop_stash(cop,arg)		CopSTASH_set(cop,(HV*)arg)
+#define BSET_cop_file(cop, arg)		Perl_warn(aTHX_ "cop_file without ITHREADS not yet implemented")
+#define BSET_cop_stashpv(cop, arg)	Perl_warn(aTHX_ "cop_stashpv without ITHREADS not yet implemented")
 #endif
 #if PERL_VERSION < 11
 #define BSET_cop_label(cop, arg)	(cop)->cop_label = arg
@@ -451,7 +463,27 @@ static int bget_swab = 0;
    special and there is no need for HINT_PRIVATE_MASK for COPs. */
 #define PL_HINTS_PRIVATE (PL_hints)
 #endif
-#if PERL_VERSION < 10
+
+#if (PERL_VERSION < 8)
+/* this is simply stolen from the code in newATTRSUB() */
+#define BSET_push_begin(ary,cv)				\
+	STMT_START {					\
+	    I32 oldscope = PL_scopestack_ix;		\
+	    ENTER;					\
+	    SAVECOPFILE(&PL_compiling);			\
+	    SAVECOPLINE(&PL_compiling);			\
+	    save_svref(&PL_rs);				\
+	    sv_setsv(PL_rs, PL_nrs);			\
+	    if (!PL_beginav)				\
+		PL_beginav = newAV();			\
+	    av_push(PL_beginav, cv);			\
+	    call_list(oldscope, PL_beginav);		\
+	    PL_curcop = &PL_compiling;			\
+	    PL_compiling.op_private = PL_hints;		\
+	    LEAVE;					\
+	} STMT_END
+#endif
+#if (PERL_VERSION >= 8) && (PERL_VERSION < 10)
 #define BSET_push_begin(ary,cv)				\
 	STMT_START {					\
             I32 oldscope = PL_scopestack_ix;		\
@@ -467,7 +499,8 @@ static int bget_swab = 0;
             PL_compiling.op_private = (U8)(PL_hints & HINT_PRIVATE_MASK);\
             LEAVE;					\
 	} STMT_END
-#else
+#endif
+#if (PERL_VERSION >= 10)
 #define BSET_push_begin(ary,cv)				\
 	STMT_START {					\
             I32 oldscope = PL_scopestack_ix;		\
@@ -545,6 +578,8 @@ static int bget_swab = 0;
 #if PERL_VERSION < 10
 #define BSET_gp_file(gv, file)	GvFILE((GV*)gv) = file
 #else
+/* unshare_hek not public */
+# if !defined(__MINGW32__)
 #define BSET_gp_file(gv, file) \
 	STMT_START {							\
 	    STRLEN len = strlen(file);					\
@@ -556,6 +591,16 @@ static int bget_swab = 0;
 	    GvFILE_HEK(gv) = share_hek(file, len, hash);		\
 	    Safefree(file);						\
 	} STMT_END
+# else
+#define BSET_gp_file(gv, file) \
+	STMT_START {							\
+	    STRLEN len = strlen(file);					\
+	    U32 hash;							\
+	    PERL_HASH(hash, file, len);					\
+	    GvFILE_HEK(gv) = share_hek(file, len, hash);		\
+	    Safefree(file);						\
+	} STMT_END
+# endif
 #endif
 
 /* NOTE: The bytecode header only sanity-checks the bytecode. If a script cares about
@@ -572,14 +617,14 @@ static int bget_swab = 0;
  */
 
 #define HEADER_FAIL(f)	\
-	Perl_croak(aTHX_ "Invalid bytecode for this architecture: " f)
+	Perl_croak(aTHX_ "ERROR Invalid bytecode: " f)
 #define HEADER_FAIL1(f, arg1)	\
-	Perl_croak(aTHX_ "Invalid bytecode for this architecture: " f, arg1)
+	Perl_croak(aTHX_ "ERROR Invalid bytecode: " f, arg1)
 #define HEADER_FAIL2(f, arg1, arg2)	\
-	Perl_croak(aTHX_ "Invalid bytecode for this architecture: " f, arg1, arg2)
+	Perl_croak(aTHX_ "ERROR Invalid bytecode: " f, arg1, arg2)
 #define HEADER_WARN(f)	\
-	Perl_warn(aTHX_ "Convert bytecode to this architecture: " f)
+	Perl_warn(aTHX_ "WARNING Convert bytecode: " f)
 #define HEADER_WARN1(f, arg1)	\
-	Perl_warn(aTHX_ "Convert bytecode to this architecture: " f, arg1)
+	Perl_warn(aTHX_ "WARNING Convert bytecode: " f, arg1)
 #define HEADER_WARN2(f, arg1, arg2)	\
-	Perl_warn(aTHX_ "Convert bytecode to this architecture: " f, arg1, arg2)
+	Perl_warn(aTHX_ "WARNING Convert bytecode: " f, arg1, arg2)

@@ -17,7 +17,7 @@ no warnings;           # XXX
 
 @ISA       = qw(Exporter);
 @EXPORT_OK = qw(assemble_fh newasm endasm assemble asm maxopix maxsvix);
-$VERSION   = '0.07_06';
+$VERSION   = '0.07_07';
 
 use strict;
 my %opnumber;
@@ -224,7 +224,7 @@ sub strip_comments {
 
 # create the ByteCode header:
 #   magic, archname, ByteLoader $VERSION, ivsize, ptrsize, longsize, byteorder
-# nvtype is irrelevant (floats are stored as strings)
+# TODO: perl version for the opcode indices.
 # byteorder is strconst, not U32 because of varying size issues (?)
 
 sub gen_header {
@@ -242,21 +242,30 @@ sub gen_header {
   if ( exists $header->{archflag} ) {
     $string .= B::Asmdata::PUT_U16( $header->{archflag} );
   }
+  if ( exists $header->{perlversion} ) {
+    $string .= B::Asmdata::PUT_strconst( '"' . $header->{perlversion} . '"');
+  }
   $string;
 }
 
+# Calculate the ByteCode header values:
+#   magic, archname, ByteLoader $VERSION, ivsize, ptrsize, longsize, byteorder
+# nvtype is irrelevant (floats are stored as strings)
+# byteorder is strconst, not U32 because of varying size issues (?)
+# perl version for the bytecode translation.
+
 sub gen_header_hash {
   my $header  = {};
-  my $version = "$ByteLoader::VERSION";
-  #if ($] < 5.009 and $version eq '0.06_01') {
-  #  $version = '0.06';# fake the old backwards compatible version
+  my $blversion = "$ByteLoader::VERSION";
+  #if ($] < 5.009 and $blversion eq '0.06_01') {
+  #  $blversion = '0.06';# fake the old backwards compatible version
   #}
   $header->{magic}     = 0x43424c50;
   $header->{archname}  = $Config{archname};
-  $header->{blversion} = $version;
+  $header->{blversion} = $blversion;
   $header->{ivsize}    = $Config{ivsize};
   $header->{ptrsize}   = $Config{ptrsize};
-  if ( $version ge "0.06_03" ) {
+  if ( $blversion ge "0.06_03" ) {
     $header->{longsize} = $Config{longsize};
   }
   my $byteorder = $Config{byteorder};
@@ -275,10 +284,13 @@ sub gen_header_hash {
     }
   }
   $header->{byteorder}   = $byteorder;
-  if ( $version ge "0.06_05" ) {
+  if ( $blversion ge "0.06_05" ) {
     my $archflag = 0;
     $archflag += 1 if $Config{useithreads};
     $header->{archflag} = $archflag;
+  }
+  if ( $blversion ge "0.06_06" ) {
+    $header->{perlversion} = $];
   }
   $header;
 }
@@ -321,6 +333,8 @@ sub assemble_insn {
   my $data = $insn_data{$insn};
   if ( defined($data) ) {
     my ( $bytecode, $putsub ) = @{$data}[ 0, 1 ];
+    error qq(unsupported instruction "$insn") unless $putsub;
+    return "" unless $putsub;
     my $argcode = &$putsub($arg);
     return chr($bytecode) . $argcode;
   }
@@ -401,6 +415,22 @@ sub asm ($;$$) {
     return if $_[1] eq "1" and $_[0] =~ /^(?:sv_refcnt)$/;
   }
   my ( $insn, $arg, $comment ) = @_;
+  if ($] < 5.007) {
+    if ($insn eq "newsvx") {
+      $arg = $arg & 0xff; # sv not SVt_NULL
+      $insn = "newsv";
+    } elsif ($insn eq "newopx") {
+      $insn = "newop";
+    } elsif ($insn eq "av_pushx") {
+      $insn = "av_push";
+    } elsif ($insn eq "ldspecsvx") {
+      $insn = "ldspecsv";
+    } elsif ($insn eq "gv_stashpvx") {
+      $insn = "gv_stashpv";
+    } elsif ($insn eq "main_cv") {
+      return;
+    }
+  }
   $out->( assemble_insn( $insn, $arg, $comment ) );
   $linenum++;
 

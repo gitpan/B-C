@@ -21,7 +21,7 @@ WriteMakefile(
     SIGN  => 1,
     clean => { FILES =>
                "bytecode[0-9]* ccode[0-9]* cccode[0-9]* ".
- 	       "*.core *.stackdump a.out *.cee *.c *.asm *.dbg *.plc *.concise *~"},
+ 	       "*.core *.stackdump a.out *.cee *.c *.asm *.dbg *.plc *.concise *~ dll.base dll.exp"},
 );
 
 sub headerpath {
@@ -38,8 +38,9 @@ package MY;
 sub libscan {
   # ignore temp testing files
   return 0 if $_[1] =~ /^(.svn|jit.*|i386|.*\.orig|bytecode.*\.pl|c?ccode\d+\..*|regen_lib\.pl)$/;
-  # Ignore Bytecode on 5.6 for now. It might be only a byteorder problem though
-  return 0 if $] < 5.007 and $_[1] =~ /ByteLoader|Bytecode\.pm|Asmdata\.pm|Assembler\.pm|Disassembler\.pm/;
+  # Ignore Bytecode on 5.6 for now. The 5.6 CORE module produces better code (until fixed :)
+  # Not even the Byteloader works for 5.6 assembled code. The Disassembler does not stop at ret.
+  return 0 if $] < 5.007 and $_[1] =~ /ByteLoader|Asmdata\.pm|Bytecode\.pm|Assembler\.pm/;
   return $_[1];
 }
 

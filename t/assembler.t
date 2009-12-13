@@ -168,6 +168,10 @@ BEGIN {
     print "1..0 # Skip -- Perl configured without ByteLoader module\n";
     exit 0;
   }
+  if ($] < 5.007 ){
+    print "1..0 # Skip -- use the CORE Perl assembler instead, which cannot be tested like this.\n";
+    exit 0;
+  }
 }
 
 use B::Asmdata      qw( %insn_data );
@@ -296,8 +300,8 @@ long	     => undef,
 #
 for my $opname ( keys( %insn_data ) ){
     my ( $opcode, $put, $getname ) = @{$insn_data{$opname}};
-    push( @{$opsByType{$getname}}, $opcode );
-    $code2name[$opcode] = $opname;
+    push( @{$opsByType{$getname}}, $opcode ) if $put;
+    $code2name[$opcode] = $opname  if $put;
 }
 
 
