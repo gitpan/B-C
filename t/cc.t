@@ -1,6 +1,6 @@
 #!./perl
 my $keep_c      = 0;	# set it to keep the c and exe files
-my $keep_c_fail = 1;	# set it to keep the c and exe files on failures. 
+my $keep_c_fail = 1;	# set it to keep the c and exe files on failures.
 # better use testcc.sh for debugging
 use Config;
 
@@ -29,15 +29,20 @@ BEGIN {
 use strict;
 my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
 my $ITHREADS  = ($Config{useithreads});
+my $AUTHOR    = -d ".svn";
 
 my @tests = tests();
-# 8,11,14..16,18..19 fail on 5.00505 + 5.6, old core failures
-my @todo = (15,18,21,25); #5.8.9
-@todo = (15,18,21,25) if $] < 5.007;
-@todo = (12,15,16,18,21,25) if $] >= 5.010;
-#@todo = (12,15,16,18,21,25) if $] >= 5.011;
+# 8,11,14..16,18..19 fail on 5.00505 + 5.6, old core failures (max 20)
+my @todo = (15,18,21,25,27..29); #5.8.9
+@todo = (15,18,21,25,27..29) if $] < 5.007;
+@todo = (15,18,21,25,28,29) if $] >= 5.010;
+@todo = (12,15,16,18,21,25,28,29) if $] >= 5.011;
+
+# skip core dump causing known limitations, like custom sort or runtime labels
+my @skip = $AUTHOR ? () : (18,21,25);
 
 my %todo = map { $_ => 1 } @todo;
+my %skip = map { $_ => 1 } @skip;
 
 print "1..".($#tests+1)."\n";
 
@@ -45,5 +50,10 @@ my $cnt = 1;
 for (@tests) {
   my $todo = $todo{$cnt} ? "#TODO" : "#";
   my ($script, $expect) = split />>>+\n/;
-  run_cc_test($cnt++, "CC", $script, $expect, $keep_c, $keep_c_fail, $todo);
+  if ($skip{$cnt}) {
+    print sprintf("ok %d # skip\n", $cnt);
+  } else {
+    run_cc_test($cnt, "CC", $script, $expect, $keep_c, $keep_c_fail, $todo);
+  }
+  $cnt++;
 }

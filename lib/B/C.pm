@@ -9,7 +9,7 @@
 
 package B::C;
 
-our $VERSION = '1.04_32';
+our $VERSION = '1.04_33';
 
 package B::C::Section;
 
@@ -420,7 +420,7 @@ sub save_pv_or_rv {
   my $pok = $sv->FLAGS & SVf_POK;
   my ( $len, $pvmax, $savesym, $pv ) = ( 0, 0 );
   if ($rok) {
-    $savesym = '(char*)' . save_rv($sv);
+    $savesym = save_rv($sv); # was "(char*)" test 29 on 5.11
   }
   else {
     $pv = $pok ? ( pack "a*", $sv->PV ) : undef;
@@ -1230,7 +1230,7 @@ sub B::BM::save {
     # Since 5.10 we don't care for saving the table. fbm_compile will do.
     warn "Saving FBM for GV $sym\n" if $debug{gv};
     $init->add("fbm_compile((SV*)&$sym, 0);");
-    $sv->save_magic;
+    $sv->save_magic; # possible additional magic. fbm_compile adds 'B'
     return $sym;
   } else {
     $init->add(sprintf( "xpvbm_list[%d].xpv_cur = %u;", $xpvbmsect->index, $len - 257 ) );
@@ -1280,7 +1280,19 @@ sub B::PVMG::save {
   my ( $savesym, $pvmax, $len, $pv ) = save_pv_or_rv($sv);
   warn sprintf( "PVMG %s (0x%x)\n", $sym, $$sv ) if $debug{mg};
 
-  if ($PERL510) {
+  if ($PERL511) {
+    $xpvmgsect->comment("xnv_u, pv_cur, pv_len, xiv_u, xmg_u, xmg_stash");
+    # how to optimize RV? sv => sv->RV cannot be initialized static.
+    if ($sv->FLAGS & SVf_ROK) {
+      $init->add(sprintf("SvRV_set(&sv_list[%d], %s);", $svsect->index+1, $savesym));
+      $savesym = '0';
+    }
+    $xpvmgsect->add(sprintf("%s, %u, %u, %d, 0, 0",
+			    $sv->NVX, $len, $pvmax, $sv->IVX)); # $pvsym?
+    $svsect->add(sprintf("&xpvmg_list[%d], %lu, 0x%x, %s",
+                         $xpvmgsect->index, $sv->REFCNT, $sv->FLAGS, $savesym));
+  }
+  elsif ($PERL510) {
     $xpvmgsect->comment("xnv_u, pv_cur, pv_len, xiv_u, xmg_u, xmg_stash");
     $xpvmgsect->add(sprintf("%s, %u, %u, %d, 0, 0",
 			    $sv->NVX, $len, $pvmax, $sv->IVX)); # $pvsym?
@@ -1308,8 +1320,9 @@ sub B::PVMG::save {
 
 sub B::PVMG::save_magic {
   my ($sv) = @_;
-  warn sprintf( "saving magic for %s (0x%x) - called from %s:%s\n",
-		class($sv), $$sv, @{[(caller(1))[3]]}, @{[(caller(1))[2]]})
+  my $sv_flags = $sv->FLAGS;
+  warn sprintf( "saving magic for %s (0x%x) flags=0x%x  - called from %s:%s\n",
+		class($sv), $$sv, $sv_flags, @{[(caller(1))[3]]}, @{[(caller(1))[2]]})
     if $debug{mg};
   my $stash = $sv->SvSTASH;
   # test 16: On 5.10 the stash is a RV to a HV. On 5.11 a SPECIAL (RV) to a HV
@@ -1323,8 +1336,13 @@ sub B::PVMG::save_magic {
     # XXX Hope stash is already going to be saved.
     $init->add( sprintf( "SvSTASH(s\\_%x) = s\\_%x;", $$sv, $$stash ) );
   }
-  # protect our SVs
-  return $sv if $PERL510 and $sv->FLAGS & 0x40040000;
+  # Protect our SVs against non-magic or SvPAD_OUR. fixes tests 16 and 14 + 23
+  my $sv_type = $sv_flags & 0xff;
+  if ($PERL510 and ($sv_type < 8 or (($sv_flags & 0x40040000) == 0x40040000))) {
+    warn sprintf("Skipping invalid PVMG type=%d, flags=0x%x (PAD_OUR?)\n", $sv_type, $sv_flags)
+      if $debug{mg};
+    return $sv;
+  }
   my @mgchain = $sv->MAGIC;
   my ( $mg, $type, $obj, $ptr, $len, $ptrsv );
   foreach $mg (@mgchain) {
@@ -1439,7 +1457,8 @@ sub B::RV::save {
 
 sub try_autoload {
   my ( $cvstashname, $cvname ) = @_;
-  warn sprintf( "No definition for sub %s::%s\n", $cvstashname, $cvname );
+  warn sprintf( "No definition for sub %s::%s. Try autoload\n", $cvstashname, $cvname )
+    if $verbose;
 
   # Handle AutoLoader classes explicitly. Any more general AUTOLOAD
   # use should be handled by the class itself.
@@ -1606,7 +1625,7 @@ sub B::CV::save {
   }
   else {
     warn sprintf( "No definition for sub %s::%s (unable to autoload)\n",
-      $cvstashname, $cvname );    # debug
+      $cvstashname, $cvname ) if $verbose;
   }
   $pv = '' unless defined $pv;    # Avoid use of undef warnings
   if ($PERL510) {
@@ -1720,13 +1739,10 @@ sub B::GV::save {
     warn sprintf( "  GV $sym isa FBM\n") if $debug{gv};
     return B::BM::save($gv);
   }
-  # Only PVGV or PVLV have names. crash in test 11: 2nd GV "x" is a (CV*) but of type 9 (GV)
-  # Also fails for test 11 at GV (PVBM) "Can" >=5.10
-  my ($is_empty, $gvname, $fullname, $name) = (1,'','','');
-  $is_empty = $gv->is_empty;
-  $gvname   = $gv->NAME;
-  $fullname = $gv->STASH->NAME . "::" . $gvname;
-  $name     = cstring($fullname);
+  my $is_empty = $gv->is_empty;
+  my $gvname   = $gv->NAME;
+  my $fullname = $gv->STASH->NAME . "::" . $gvname;
+  my $name     = cstring($fullname);
   warn "  GV name is $name\n" if $debug{gv};
   my $egvsym;
   my $is_special = $gv->isa("B::SPECIAL");
@@ -2324,6 +2340,11 @@ EOT
   }
   else {
     print "typedef char * RE;\n";
+  }
+  if ($] == 5.010000) {
+    print "#ifndef RX_EXTFLAGS\n";
+    print "# define RX_EXTFLAGS(prog) ((prog)->extflags)\n";
+    print "#endif\n";
   }
   print "static GV *gv_list[$gv_index];\n" if $gv_index;
   print "\n";
@@ -3301,11 +3322,11 @@ Current status: experimental.
 5.10:
     +
     special our handling: (tests 14 + 23)
+    main::a missing AV magic (test 16)
     destruction of static pvs for -O1
 
 5.11:
-    +
-    test 16
+
 
 =head1 AUTHOR
 
