@@ -1,32 +1,27 @@
 5.8, 5.6 and earlier had a good core perl compiler, but we are better.
 
 Basic testsuite added, coverage TODO.
-Bytecode compiler disabled for 5.6. 
-The core compiler fails 50% but in mine is a blocker.
+Bytecode compiler disabled for 5.6. The core compiler fails 50% but
+in mine is a blocker.
 
 Same ok and less failures as with 5.6, 5.8 and 5.9.4.
 In 5.8.8 and 5.8.9 we have much less errors in the testsuite for the
-new CPAN compiler and the CORE compiler, just __DATA__ is still 
-unsupported. See below.
+new CPAN compiler and the CORE compiler. See below.
 
-Several B::C and B::CC bugs fixed. 5.10 compatibility added.
+Several B::C and B::CC bugs fixed. 5.10 + 5.11 compatibility added.
 
 Open Problems:
 5.6:
-    reading from __DATA__ handles (15)
     test 25, 27
     XSUB load order via B::Stash (?). Usually fixed via perlcc.
 5.8:
     none else
-5.10:
+5.10 + 5.11:
     +
-    require $scalar
-    use IO: wrong static sv_u.svu_iv init (29)
-    destruction of static pvs for -O1
-5.11:
-    +
-    S_unshare_hek_or_pvn (16)
-See below at detailed 5.6, 5.8, 5.10, 5.11 status
+    reading from __DATA__ handles (15) -fsave-data fails on non-threaded builds.
+    Optimization: destruction of static pvs for -O1 (-fcog temp. disabled)
+
+See below at the detailed 5.6, 5.8, 5.10, 5.11 status
 
 TEST STATUS
 -----------
@@ -35,13 +30,6 @@ List of failed tests.
 
 CORE (old)
 ----
-p=perl5.6.2
-t/testc.sh -q -c
-for t in $(seq -f"%02.0f" 29); do rm ccode 2>/dev/null; $p -MO=C,-occode.c ccode$t.pl 2>/dev/null && $p script/cc_harness ccode.c -o ccode >/dev/null; echo -n "$t: "; $p ccode$t.pl; echo -n " => "; ./ccode; echo; done
-p=perl5.8.8
-for t in $(seq -f"%02.0f" 29); do rm ccode 2>/dev/null; $p -MO=C,-occode.c ccode$t.pl 2>/dev/null && $p script/cc_harness -Bstatic ccode.c -o ccode >/dev/null; echo -n "$t: "; $p ccode$t.pl; echo -n " => "; ./ccode; echo; done
-p=perl5.8.8-nt
-for t in $(seq -f"%02.0f" 29); do rm ccode 2>/dev/null; $p -MO=C,-occode.c ccode$t.pl 2>/dev/null && $p script/cc_harness -Bdynamic ccode.c -o ccode >/dev/null; echo -n "$t: "; $p ccode$t.pl; echo -n " => "; ./ccode; echo; done
 
 5.6.2:
 t/bytecode      3,6,8..10,12,15,16,18,25,26,27,28
@@ -61,64 +49,78 @@ t/cc            7,11,14,15,18..21,23..25,28,29
 t/cc_o1         7,11,14,15,18..21,23..29
 t/cc_o2         7,10,11,14..16,18-21,23..29
 
+Recipe:
+  p=perl5.6.2
+  t/testc.sh -q -c
+  for t in $(seq -f"%02.0f" 29); do rm ccode 2>/dev/null; $p -MO=C,-occode.c ccode$t.pl 2>/dev/null && $p script/cc_harness ccode.c -o ccode >/dev/null; echo -n "$t: "; $p ccode$t.pl; echo -n " => "; ./ccode; echo; done
+  p=perl5.8.8
+  for t in $(seq -f"%02.0f" 29); do rm ccode 2>/dev/null; $p -MO=C,-occode.c ccode$t.pl 2>/dev/null && $p script/cc_harness -Bstatic ccode.c -o ccode >/dev/null; echo -n "$t: "; $p ccode$t.pl; echo -n " => "; ./ccode; echo; done
+p=perl5.8.8-nt
+  for t in $(seq -f"%02.0f" 29); do rm ccode 2>/dev/null; $p -MO=C,-occode.c ccode$t.pl 2>/dev/null && $p script/cc_harness -Bdynamic ccode.c -o ccode >/dev/null; echo -n "$t: "; $p ccode$t.pl; echo -n " => "; ./ccode; echo; done
+
+
 B::C (new)
 ----
 t/testc.sh -q -c; t/testcc.sh -q -c or make test TEST_VERBOSE=1
 
 5.6.2:					| non-threaded
 t/bytecode      broken
-t/c             15,25,27,28            	| 15
-t/c_o1          15,25,27..29		| 15
-t/c_o2          15,25,27,28		| 15
-t/cc            15,18,21,25,27..29
-t/cc_o1         15,18,21,25..28
-t/cc_o2         10,15,16,18,21,25..29
+t/c             15,25,27            	| 15
+t/c_o1          15,25,27		| 15
+t/c_o2          27,29			| 15
+t/cc            15,18,21,25,27,29
+t/cc_o1         15,18,21,25..27,29
+t/cc_o2         10,15,16,18,21,25..27,29
 
 5.8.8: (5.8.8 + 5.8.8-nt)		| non-threaded
 t/bytecode      ok
-t/c             15,27,28	     	| 15,27,28
-t/c_o1          15,28,29		| 15,28,29
-t/c_o2          15,27,28 		| 15,27,28
-t/cc            15,18,21,25,27..29	| 15,18,21,25,27..28
-t/cc_o1         15,18,21,25..28		| 15,18,21,25..28
-t/cc_o2         10,15..16,18,21,25..28	| 10,15,16,18,21,25..28
+t/c             27	     		| 27,29
+t/c_o1          27	 		| 27,29
+t/c_o2          27 			| 27,29
+t/cc            15,18,21,25,27,29	| 15,18,21,25,27,29
+t/cc_o1         15,18,21,25..27,29	| 15,18,21,25..27,29
+t/cc_o2         10,15,16,18,21,25..27,29| 10,15,16,18,21,25..27,29
 
 5.8.9:
 t/bytecode      ok
-t/c             15,27,28
-t/c_o1          15,27,28
+t/c             27
+t/c_o1          27,29
 t/c_o2          15,27,28
-t/cc            15,18,21,25,27..29	 
-t/cc_o1         15,18,21,25..29	 
-t/cc_o2         10,15..16,18,21,25..29
+t/cc            15,18,21,25,27,29
+t/cc_o1         15,18,21,25..27,29
+t/cc_o2         10,15,16,18,21,25..27,29
 
 5.10.1: (same results as non-threaded)
-t/bytecode 	2..5,7,11,20,28			| 9..12,20,27..29
-t/c 		15,28,29
-t/c_o1          10,12,13,15,17..20,22,28
+t/bytecode 	2..5,7,11,20,28			| 9..12,20,27,29
+t/c 		ok				| 15
+t/c_o1          29
 t/c_o2          10,12,13,15,17..20,22,28
-t/cc 		15,18,21,25,28,29
-t/cc_o1         15,18,21,25,26,28,29
-t/cc_o2         15,18,21,25,26,28,29
+t/cc 		15,29
+t/cc_o1         12,15,18,21,25,26,29
+t/cc_o2         10,12,15,16,18,21,25,26,29
 
 5.11.2: (same results as non-threaded)
-t/bytecode 	9..12,16,20,21,27..29
-t/c 		15,16,28
-t/c_o1          10,12,13,15..20,22,28
+t/bytecode 	9..12,16,20,21,27,29
+t/c 		11,15,16
+t/c_o1          15,16
 t/c_o2          10,12,13,15..20,22,28
-t/cc 		12,15,16,18,21,25,28,29
-t/cc_o1         12,15,16,18,21,25,26,28,29
-t/cc_o2         12,15,16,18,21,25,26,28,29
+t/cc 		11,15,16,29
+t/cc_o1         11,15,26,29
+t/cc_o2         10,11,15,16,26,29
 
 5.10, 5.11 status
 -----------------
-TODO for B::C:
-  __DATA__ IO (15)
-  destruction: undef comppad_name, -O1 static PVs and HEKs (mult.)
-  GVCV for 5.11 (27)
-  runtime require $scalar (28)
+TODO for B::C
+  __DATA__ IO (15) partially broken
+  destruction: -O1 static PVs and HEKs (mult.)
 
 DONE:
+ccode17_o1 namepad[1] to PL_sv_undef 
+
+GVCV for 5.11 (27)
+
+runtime require $scalar (28)
+
 RVs for 5.11 (29)
 
 index (fbm_compile) for GVs fixed with 1.04_31
@@ -163,11 +165,27 @@ cop_io status?
 
 5.8 status
 ----------
-I've restored 5.8 backwards compatibility, mainly for test comparison.
-But since the new B::C compiler is better than the CORE compiler,
-it is installed.
+I've restored full 5.8 backwards compatibility, mainly for test comparison.
+But since the new B::C compiler is better than the CORE compiler, it is installed.
 
 Details:
+--------
+-fcog: (13) unshare_hek tricky assertion fails
+        he: "Find the shared he which is just before us in memory"
+        ./ccode13_o1 Assertion he->shared_he_he.hent_hek == hek failed: file "hv.c", line 2327.
+        Maybe call our own destruct handler on >=510, which resets all such pv's to NULL beforehand.
+
+cccode12_o2: 5.10.1d-nt
+        Program received signal SIGSEGV, Segmentation fault.
+        0x521ab445 in Perl_pop_scope () at scope.c:103
+        103         const I32 oldsave = PL_scopestack[--PL_scopestack_ix];
+        (gdb) p PL_scopestack_ix
+        $1 = -272716323
+        (gdb) bt
+        #0  0x521ab445 in Perl_pop_scope () at scope.c:103
+        #1  0x52121784 in Perl_pp_leave () at pp_hot.c:1904
+        #2  0x00401ca5 in _fu23__PL_ppaddr () at cccode12_o2.c:246
+        #3  0x520d95d1 in Perl_runops_debug () at dump.c:1968
 
 bytecode11 - 5.11d
 assertion "isGV_with_GP(shplep)" failed: file "B.c", line 4961
@@ -275,4 +293,4 @@ cc B::CC,
 -D -DDEBUGGING perl, also used as d version suffix, eg 5.8.8d
 -nt not threaded perl.
 
-2009-12-14 22:03:25 rurban
+2009-12-18 rurban
