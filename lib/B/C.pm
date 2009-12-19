@@ -9,7 +9,7 @@
 
 package B::C;
 
-our $VERSION = '1.06';
+our $VERSION = '1.07';
 
 package B::C::Section;
 
@@ -1058,7 +1058,7 @@ sub savepvn {
   my @res;
 
   # work with byte offsets/lengths
-  my $pv = pack "a*", $pv;
+  $pv = pack "a*", $pv;
   if ( defined $max_string_len && length($pv) > $max_string_len ) {
     push @res, sprintf( "New(0,%s,%u,char);", $dest, length($pv) + 1 );
     my $offset = 0;
@@ -1204,10 +1204,12 @@ sub B::BM::save {
   }
   my $len = length($pv);
   if ($PERL510) {
-    $init->add( sprintf( "$sym = (GV*)newSV(%d);", $len ),
+    # XXX TODO if READONLY and FAKE use newSVpvn_share instead
+    $init->add( sprintf( "$sym = (GV*)newSV_type(SVt_PVGV);" ),
 		sprintf( "SvFLAGS($sym) = 0x%x;", $sv->FLAGS ),
-		sprintf( "SvREFCNT($sym) = %u;", $sv->REFCNT ),
-		sprintf( "SvPVX($sym) = %s;", cstring($pv) ) );
+		sprintf( "SvREFCNT($sym) = %u;", $sv->REFCNT + 1 ),
+		sprintf( "SvPVX($sym) = %s;", cstring($pv) ),
+		sprintf( "SvLEN_set($sym, %d);", $len ) );
   } else {
     $xpvbmsect->comment('pv,len,len+258,IVX,NVX,0,0,USEFUL,PREVIOUS,RARE');
     $xpvbmsect->add
@@ -1223,22 +1225,19 @@ sub B::BM::save {
   }
 
   if (!$pv_copy_on_grow) {
-    if ($PERL510) {
-      $init->add(savepvn("$sym->sv_u.svu_pv", $pv ) );
-    }
-    else {
+    if (!$PERL510) {
       $init->add(savepvn( sprintf( "xpvbm_list[%d].xpv_pv", $xpvbmsect->index ), $pv ) );
     }
   }
   if ($PERL510) {
     # Since 5.10 we don't care for saving the table. fbm_compile will do.
     warn "Saving FBM for GV $sym\n" if $debug{gv};
-    $init->add("fbm_compile((SV*)&$sym, 0);");
-    $sv->save_magic; # possible additional magic. fbm_compile adds 'B'
+    $init->add("fbm_compile((SV*)$sym, 0);");
+    $sv->save_magic; # restore possible additional magic. fbm_compile adds just 'B'
     return $sym;
   } else {
     $init->add(sprintf( "xpvbm_list[%d].xpv_cur = %u;", $xpvbmsect->index, $len - 257 ) );
-    # XXX fbm_compile since 5.8 is doing something we haven't caught yet
+    # XXX OPTIM fbm_compile on 5.8 is doing something we haven't caught yet
     $init->add(sprintf( "fbm_compile(&sv_list[%d], 0);", $svsect->index) ) unless $PERL56;
     return savesym( $sv, sprintf( "&sv_list[%d]", $svsect->index ) );
   }
@@ -1363,7 +1362,7 @@ sub B::PVMG::save_magic {
       };
     }
 
-    unless ( $type eq 'r' ) { # FIXME test 23
+    unless ( $type eq 'r' ) { # test 23
       $obj = $mg->OBJ;
       # 5.10: Can't call method "save" on unblessed reference: perl -Mblib script/perlcc t/c.t
       #warn "Save MG ". $obj . "\n" if $PERL510;
@@ -1648,7 +1647,7 @@ sub B::CV::save {
     #  $pvsym = "0";
     #}
     # TODO:
-    my $ourstash = "0";  # TODO stash name to bless it (test 16: "main::")
+    # my $ourstash = "0";  # TODO stash name to bless it (test 16: "main::")
     #$xpvcvsect->comment('GvSTASH cur len  depth mg_u mg_stash cv_stash start_u root_u cv_gv cv_file cv_padlist cv_outside outside_seq cv_flags');
     $symsect->add
       (sprintf("XPVCVIX$xpvcv_ix\ts\\_%x, %u, %u, %s, %s, %s,"
@@ -1719,6 +1718,10 @@ sub B::CV::save {
     $init->add( sprintf( "CvSTASH(s\\_%x) = s\\_%x;", $$cv, $$stash ) );
     warn sprintf( "done saving STASH 0x%x for CV 0x%x\n", $$stash, $$cv )
       if $debug{cv};
+  }
+  my $magic = $cv->MAGIC;
+  if ($magic and $$magic) {
+    $cv->save_magic; # XXX will this work?
   }
   $symsect->add(sprintf(
       "SVIX%d\t(XPVCV*)&xpvcv_list[%u], %lu, 0x%x".($PERL510?', 0':''),
@@ -2132,8 +2135,8 @@ sub B::IO::save {
     ( $pvsym, $len ) = savepv($pv);
   } else {
     $pvsym = 'NULL';
+    $len = 0;
   }
-  my $len = length($pv);
   if ($PERL511) {
     warn sprintf( "IO 0x%x (%s) = '%s'\n", $$io, $io->SvTYPE, $pv ) if $debug{sv};
     $xpviosect->comment("xnv_u, cur, len, lines, xmg_u, xmg_stash, xio_ifp, xio_ofp, xio_dirpu, ..., type, flags");

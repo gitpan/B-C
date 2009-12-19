@@ -34,7 +34,7 @@ my @tests = tests();
 my @todo = (27);   #5.8.9
 @todo = (27,29)    if !$ITHREADS;
 @todo = (15,25,27) if $] < 5.007;
-@todo = (11,29)    if $] >= 5.010;
+@todo = (15,29)    if $] >= 5.010;
 @todo = (15,16)    if $] >= 5.011;
 
 my %todo = map { $_ => 1 } @todo;
