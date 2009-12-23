@@ -9,7 +9,7 @@
 
 package B::C;
 
-our $VERSION = '1.07';
+our $VERSION = '1.08';
 
 package B::C::Section;
 
@@ -1047,7 +1047,7 @@ sub B::NV::save {
       $xpvnvsect->index, $sv->REFCNT, $sv->FLAGS, $PERL510 ? ', 0' : ''
     )
   );
-  warn sprintf( "Saving NV %s to xpvnv_list[%d], sv_list[%d]",
+  warn sprintf( "Saving NV %s to xpvnv_list[%d], sv_list[%d]\n",
     $val, $xpvnvsect->index, $svsect->index )
     if $debug{sv};
   savesym( $sv, sprintf( "&sv_list[%d]", $svsect->index ) );
@@ -1091,26 +1091,18 @@ sub B::PVLV::save {
   my ( $lvtarg, $lvtarg_sym );
   if ($PERL510) {
     $xpvlvsect->comment('xnv_u, CUR, LEN, GvNAME, MAGIC, STASH, TARGOFF, TARGLEN, TYPE');
-    $xpvlvsect->add
-      (
-       sprintf(
-	       "%u, %u, %d, 0/*GvNAME later*/, 0, Nullhv, %u, %u, 0, %s",
+    $xpvlvsect->add(
+       sprintf("%u, %u, %d, 0/*GvNAME later*/, 0, Nullhv, %u, %u, 0, %s",
 	       $sv->NVX, $len, $pvmax, 
-	       $sv->TARGOFF, $sv->TARGLEN, cchar( $sv->TYPE )
-	      )
-      );
+	       $sv->TARGOFF, $sv->TARGLEN, cchar( $sv->TYPE ) ));
     $svsect->add(sprintf("&xpvlv_list[%d], %lu, 0x%x, %s",
                          $xpvlvsect->index, $sv->REFCNT, $sv->FLAGS, $pvsym));
   } else {
     $xpvlvsect->comment('PVX, CUR, LEN, IVX, NVX, TARGOFF, TARGLEN, TYPE');
-    $xpvlvsect->add
-      (
-       sprintf(
-	       "%s, %u, %u, %d, %g, 0, 0, %u, %u, 0, %s",
+    $xpvlvsect->add(
+       sprintf("%s, %u, %u, %d, %g, 0, 0, %u, %u, 0, %s",
 	       $pvsym,   $len,         $pvmax,       $sv->IVX,
-	       $sv->NVX, $sv->TARGOFF, $sv->TARGLEN, cchar( $sv->TYPE )
-	      )
-      );
+	       $sv->NVX, $sv->TARGOFF, $sv->TARGLEN, cchar( $sv->TYPE ) ));
     $svsect->add(sprintf("&xpvlv_list[%d], %lu, 0x%x",
                          $xpvlvsect->index, $sv->REFCNT, $sv->FLAGS));
   }
@@ -1138,11 +1130,8 @@ sub B::PVIV::save {
   $xpvivsect->add(
     sprintf( "%s, %u, %u, %d", $savesym, $len, $pvmax, $sv->IVX ) );
   $svsect->add(
-    sprintf(
-      "&xpviv_list[%d], %u, 0x%x",
-      $xpvivsect->index, $sv->REFCNT, $sv->FLAGS
-    )
-  );
+    sprintf("&xpviv_list[%d], %u, 0x%x",
+            $xpvivsect->index, $sv->REFCNT, $sv->FLAGS ) );
   if ( defined($pv) && !$pv_copy_on_grow ) {
     if ($PERL510) {
       $init->add(
@@ -1174,11 +1163,8 @@ sub B::PVNV::save {
       sprintf( "%s, %u, %u, %d, %s", $savesym, $len, $pvmax, $sv->IVX, $val ) );
   }
   $svsect->add(
-    sprintf(
-      "&xpvnv_list[%d], %lu, 0x%x %s",
-      $xpvnvsect->index, $sv->REFCNT, $sv->FLAGS, $PERL510 ? ', 0' : ''
-    )
-  );
+    sprintf("&xpvnv_list[%d], %lu, 0x%x %s",
+            $xpvnvsect->index, $sv->REFCNT, $sv->FLAGS, $PERL510 ? ', 0' : '' ) );
   if ( defined($pv) && !$pv_copy_on_grow ) {
     if ($PERL510) {
       $init->add(
@@ -1212,8 +1198,7 @@ sub B::BM::save {
 		sprintf( "SvLEN_set($sym, %d);", $len ) );
   } else {
     $xpvbmsect->comment('pv,len,len+258,IVX,NVX,0,0,USEFUL,PREVIOUS,RARE');
-    $xpvbmsect->add
-      (
+    $xpvbmsect->add(
        sprintf("%s, %u, %u, %d, %s, 0, 0, %d, %u, 0x%x",
 	       $PERL510 ? '0' : (defined($pv) && $pv_copy_on_grow ? cstring($pv) : "0"),
 	       $len,        $len + 258,    $sv->IVX, $sv->NVX,
@@ -1343,10 +1328,9 @@ sub B::PVMG::save_magic {
     $init->add( sprintf( "SvSTASH(s\\_%x) = s\\_%x;", $$sv, $$stash ) );
   }
   # Protect our SVs against non-magic or SvPAD_OUR. Fixes tests 16 and 14 + 23
-  my $sv_type = $sv_flags & 0xff;
-  if ($PERL510 and ($sv_type < 8 or (($sv_flags & 0x40040000) == 0x40040000))) {
-    warn sprintf("Skipping invalid PVMG type=%d, flags=0x%x (PAD_OUR?)\n", $sv_type, $sv_flags)
-      if $debug{mg};
+  if ($PERL510 and !$sv->MAGICAL) {
+    warn sprintf("Skipping non-magical PVMG type=%d, flags=0x%x\n",
+                 $sv_flags && 0xff, $sv_flags) if $debug{mg};
     return $sv;
   }
   my @mgchain = $sv->MAGIC;
@@ -1364,7 +1348,7 @@ sub B::PVMG::save_magic {
 
     unless ( $type eq 'r' ) { # test 23
       $obj = $mg->OBJ;
-      # 5.10: Can't call method "save" on unblessed reference: perl -Mblib script/perlcc t/c.t
+      # 5.10: Can't call method "save" on unblessed reference
       #warn "Save MG ". $obj . "\n" if $PERL510;
       $obj->save
         unless $PERL510 and ref $obj eq 'SCALAR';
@@ -1441,7 +1425,6 @@ sub B::RV::save {
       $init->add(
         sprintf( "xrv_list[%d].xrv_rv = (SV*)%s;\n", $xrvsect->index, $rv ) );
     }
-
     # and stashes, too
     elsif ( $sv->RV->isa('B::HV') && $sv->RV->NAME ) {
       $xrvsect->add("(SV*)Nullhv");
@@ -1463,12 +1446,30 @@ sub B::RV::save {
 
 sub try_autoload {
   my ( $cvstashname, $cvname ) = @_;
-  warn sprintf( "No definition for sub %s::%s. Try autoload\n", $cvstashname, $cvname )
+  warn sprintf( "No definition for sub %s::%s. Try Autoload\n", $cvstashname, $cvname )
     if $verbose;
+
+  # XXX Search and call ::AUTOLOAD (=> ROOT and XSUB) (test 27, 5.8)
+  no strict 'refs';
+  # Since 5.10 AUTOLOAD xsubs are already resolved
+  if (exists ${"$cvstashname::"}{AUTOLOAD}) {
+    my $auto = \&{"$cvstashname\::AUTOLOAD"};
+    # Tweaked version of __PACKAGE__::AUTOLOAD
+    ${"$cvstashname\::AUTOLOAD"} = "$cvstashname\::$cvname";
+    eval { &$auto() };
+    unless ($@) {
+      # we need just the empty auto GV, $auto->ROOT and $auto->XSUB,
+      # but not the whole CV optree. XXX This still fails with 5.8
+      #B::make_sv_object($auto, B::sv_undef)->save;
+      my $cv = svref_2object( $auto );
+      return $cv;
+    }
+  }
+
+  # XXX TODO Check Selfloader (test 31?)
 
   # Handle AutoLoader classes explicitly. Any more general AUTOLOAD
   # use should be handled by the class itself.
-  no strict 'refs';
   my $isa = \@{"$cvstashname\::ISA"};
   if ( grep( $_ eq "AutoLoader", @$isa ) ) {
     warn "Forcing immediate load of sub derived from AutoLoader\n" if $verbose;
@@ -1503,6 +1504,7 @@ sub B::CV::save {
     warn sprintf( "CV as PVGV 0x%x %s::%s\n", $$gv, $cvstashname, $cvname )
       if $debug{cv};
   }
+  # XXX TODO need to save the gv stash::AUTOLOAD if exists
   my $root    = $cv->ROOT;
   my $cvxsub  = $cv->XSUB;
   my $isconst;
@@ -1573,16 +1575,21 @@ sub B::CV::save {
   $svsect->add("SVIX$sv_ix");
   my $xpvcv_ix = $xpvcvsect->index + 1;
   $xpvcvsect->add("XPVCVIX$xpvcv_ix");
-
   # Save symbol now so that GvCV() doesn't recurse back to us via CvGV()
   $sym = savesym( $cv, "&sv_list[$sv_ix]" );
+
   warn sprintf( "saving $cvstashname\:\:$cvname CV 0x%x as $sym\n", $$cv )
     if $debug{cv};
   if ( !$$root && !$cvxsub ) {
-    if ( try_autoload( $cvstashname, $cvname ) ) {
-      # Recalculate root and xsub
-      $root   = $cv->ROOT;
-      $cvxsub = $cv->XSUB;
+    if ( my $auto = try_autoload( $cvstashname, $cvname ) ) {
+      if (ref $auto eq 'B::CV') { # explicit goto
+        $root   = $auto->ROOT;
+        $cvxsub = $auto->XSUB;
+      } else {
+        # Recalculated root and xsub
+        $root   = $cv->ROOT;
+        $cvxsub = $cv->XSUB;
+      }
       if ( $$root || $cvxsub ) {
         warn "Successful forced autoload\n" if $verbose;
       }
@@ -1600,7 +1607,7 @@ sub B::CV::save {
     my $ppname = "";
     if ($$gv) {
       my $stashname = $gv->STASH->NAME;
-      my $gvname    = $gv->NAME;
+       my $gvname    = $gv->NAME;
       if ( $gvname ne "__ANON__" ) {
         $ppname = ( ${ $gv->FORM } == $$cv ) ? "pp_form_" : "pp_sub_";
         $ppname .= ( $stashname eq "main" ) ? $gvname : "$stashname\::$gvname";
@@ -1619,6 +1626,9 @@ sub B::CV::save {
     warn sprintf( "done saving op tree for CV 0x%x, name %s, root 0x%x => start=%s\n",
       $$cv, $ppname, $$root, $startfield )
       if $debug{cv};
+    # XXX missing cv_start for AUTOLOAD on 5.8
+    $startfield = objsym($root->next) unless $startfield; # 5.8 autoload has only root
+    $startfield = "(OP*)Nullany" unless $startfield;
     if ($$padlist) {
       warn sprintf( "saving PADLIST 0x%x for CV 0x%x\n", $$padlist, $$cv )
         if $debug{cv};
@@ -1653,7 +1663,7 @@ sub B::CV::save {
       (sprintf("XPVCVIX$xpvcv_ix\ts\\_%x, %u, %u, %s, %s, %s,"
 	       ." %s, %s, s\\_%x, %s, %s, (PADLIST *)%s,"
 	       ." (CV*)s\\_%x, %s, 0x%x",
-	       $gv->STASH, # TODO!
+	       $gv->STASH, # TODO! fails with 29
 	       $len, $len,
 	       $cv->DEPTH,
 	       "NULL", "Nullhv", #MAGIC + STASH later
@@ -1678,7 +1688,7 @@ sub B::CV::save {
     $symsect->add(
       sprintf("XPVCVIX$xpvcv_ix\t%s, %u, 0, %d, %s, 0, Nullhv, Nullhv, %s, s\\_%x, $xsub, $xsubany, Nullgv, \"\", %d, s\\_%x, (CV*)s\\_%x, 0x%x",
         cstring($pv),      length($pv),    $cv->IVX,
-        $cv->NVX,  $startfield,       ${ $cv->ROOT }, $cv->DEPTH,
+        $cv->NVX,  $startfield,       $$root, $cv->DEPTH,
         $$padlist, ${ $cv->OUTSIDE }, $cv->CvFLAGS
       )
     );
@@ -1688,7 +1698,7 @@ sub B::CV::save {
     $symsect->add(
       sprintf("XPVCVIX$xpvcv_ix\t%s, %u, 0, %d, %s, 0, Nullhv, Nullhv, %s, s\\_%x, $xsub, $xsubany, Nullgv, \"\", %d, s\\_%x, (CV*)s\\_%x, 0x%x, 0x%x",
         cstring($pv),      length($pv),    $cv->IVX,
-        $cv->NVX,  $startfield,       ${ $cv->ROOT }, $cv->DEPTH,
+        $cv->NVX,  $startfield,       $$root, $cv->DEPTH,
         $$padlist, ${ $cv->OUTSIDE }, $cv->CvFLAGS,   $cv->OUTSIDE_SEQ
       )
     );
@@ -1751,7 +1761,8 @@ sub B::GV::save {
   }
   my $is_empty = $gv->is_empty;
   my $gvname   = $gv->NAME;
-  my $fullname = $gv->STASH->NAME . "::" . $gvname;
+  my $package  = $gv->STASH->NAME;
+  my $fullname = $package . "::" . $gvname;
   my $name     = cstring($fullname);
   warn "  GV name is $name\n" if $debug{gv};
   my $egvsym;
@@ -1759,12 +1770,30 @@ sub B::GV::save {
 
   if ( !$is_empty ) {
     my $egv = $gv->EGV;
-    if ( $$gv != $$egv ) {
-      warn(
-        sprintf( "EGV name is %s, saving it now\n",
-          $egv->STASH->NAME . "::" . $egv->NAME )
-      ) if $debug{gv} and !$egv->isa("B::SPECIAL");
-      $egvsym = $egv->save;
+    unless ($egv->isa("B::SPECIAL")) {
+      my $estash = $egv->STASH->NAME;
+      if ( $$gv != $$egv ) {
+        warn(sprintf( "EGV name is %s, saving it now\n",
+                      $estash . "::" . $egv->NAME )
+            ) if $debug{gv};
+        $egvsym = $egv->save;
+        {
+          no strict 'refs';
+          # catch imported AUTOLOAD (unused)
+          svref_2object( \*{$estash."::AUTOLOAD"} )->save 
+            if $estash and defined ${$estash."::"}{AUTOLOAD};
+          svref_2object( \*{$estash."::CLONE"} )->save 
+            if $estash and defined ${$estash."::"}{CLONE};
+        }
+      }
+    }
+    {
+      no strict 'refs';
+      # fix test 31, catch unreferenced AUTOLOAD
+      svref_2object( \*{$package."::AUTOLOAD"} )->save
+        if $package and exists ${$package."::"}{AUTOLOAD};
+      svref_2object( \*{$package."::CLONE"} )->save
+        if $package and exists ${$package."::"}{CLONE};
     }
   }
   $init->add(qq[$sym = gv_fetchpv($name, TRUE, SVt_PV);]);
@@ -1790,11 +1819,6 @@ sub B::GV::save {
       $savefields = Save_HV | Save_AV | Save_SV | Save_CV | Save_FORM | Save_IO;
     }
     else {
-      # Remove SVpgv_GP (GV has a valid GP) SvFLAGS(sv) &= ~SVpgv_GP
-      # 5.8 had SvFLAGS 0x600d, 5.11 has 0x8009
-      #$svflags = $gv->FLAGS && 0x8000 ? $gv->FLAGS - 0x8000 : $gv->FLAGS; #SVpgv_GP
-      #$init->add(sprintf("GvGP($sym) = 0;"));
-      #warn("Removing empty GP from $name\n") if $debug{gv};
       $init->add( sprintf("GvGP($sym) = Perl_newGP(aTHX_ $sym);") );
     }
   }
@@ -1816,7 +1840,7 @@ sub B::GV::save {
   }
 
   # Shouldn't need to do save_magic since gv_fetchpv handles that
-  #$gv->save_magic if $PERL510; # re-enabled for 5.10
+  #$gv->save_magic if $PERL510;
   # XXX will always be > 1!!!
   my $refcnt = $gv->REFCNT + 1;
   $init->add( sprintf( "SvREFCNT($sym) += %u;", $refcnt - 1 ) ) if $refcnt > 1;
@@ -2588,9 +2612,9 @@ EOT
     exitstatus = perl_run( my_perl );
 EOT
   if ( $PERL510 and $pv_copy_on_grow) {
-    print "    my_perl_destruct( my_perl );";
+    print "    my_perl_destruct( my_perl );\n";
   } elsif ( $] >= 5.007003 ) {
-    print "    perl_destruct( my_perl );";
+    print "    perl_destruct( my_perl );\n";
   }
   print <<'EOT';
     perl_free( my_perl );
@@ -2823,10 +2847,10 @@ sub walkpackages {
   while ( ( $sym, $ref ) = each %$symref ) {
     local (*glob);
     *glob = $ref;
-    warn("Walkpackages $sym") if $debug{p};
+    warn("Walkpackages $prefix$sym\n") if $debug{pkg};
     if ( $sym =~ /::$/ ) {
       $sym = $prefix . $sym;
-      # XXX The walker was missing main subs to avoid recursion into O compiler subs again
+      # The walker was missing main subs to avoid recursion into O compiler subs again
       if ( $sym ne "main::" && $sym ne "<none>::" && &$recurse($sym) ) {
         walkpackages( \%glob, $recurse, $sym );
       }
@@ -2856,13 +2880,23 @@ sub save_unused_subs {
 }
 
 sub save_context {
+  warn "save context:\n" if $verbose;
+  $init->add("/* save context */",
+	     "/* curpad names */");
+  warn "curpad names:\n" if $verbose;
   my $curpad_nam      = ( comppadlist->ARRAY )[0]->save;
+  warn "curpad syms:\n" if $verbose;
+  $init->add("/* curpad syms */");
   my $curpad_sym      = ( comppadlist->ARRAY )[1]->save;
+  warn "\%INC and \@INC:\n" if $verbose;
+  $init->add('/* %INC */');
   my $inc_hv          = svref_2object( \%INC )->save;
+  $init->add('/* @INC */');
   my $inc_av          = svref_2object( \@INC )->save;
+  warn "amagic_generation:\n" if $verbose;
+  $init->add("/* amagic_generation */");
   my $amagic_generate = amagic_generation;
   $init->add(
-    "/* save context */",
     "GvHV(PL_incgv) = $inc_hv;",
     "GvAV(PL_incgv) = $inc_av;",
     "PL_curpad = AvARRAY($curpad_sym);",
@@ -3379,3 +3413,10 @@ Malcolm Beattie, C<mbeattie@sable.ox.ac.uk>,
 Reini Urban, C<rurban@cpan.org>
 
 =cut
+
+# Local Variables:
+#   mode: cperl
+#   cperl-indent-level: 2
+#   fill-column: 100
+# End:
+# vim: expandtab shiftwidth=2:

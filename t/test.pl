@@ -805,7 +805,7 @@ sub run_cc_test {
 		  nolib    => $ENV{PERL_CORE} ? 0 : 1, # include ../lib only in CORE
 		  stderr   => 1, # to capture the "ccode.pl syntax ok"
 		  progfile => $test);
-  unless ($?) {
+  if (! $? and -s $cfile) {
     use ExtUtils::Embed ();
     my $command = ExtUtils::Embed::ccopts." -o $exe $cfile ";
     $command .= " ".ExtUtils::Embed::ldopts("-std");
@@ -821,6 +821,9 @@ sub run_cc_test {
     my $exe = "./".$exe unless $^O eq 'MSWin32';
     $got = `$exe`;
     if (defined($got) and ! $?) {
+      if ($cnt == 25 and $expect eq '0 1 2 3 4321' and $] < 5.008) {
+        $expect = '0 1 2 3 4 5 4321';
+      }
       if ($got =~ /^$expect$/) {
 	print "ok $cnt", $todo eq '#' ? "\n" : " $todo\n";
 	unlink ($test, $cfile, $exe) if !$keep_c and ! -s $cfile;
@@ -837,7 +840,6 @@ sub run_cc_test {
   }
   print "not ok $cnt $todo wanted: \"$expect\", \$\? = $?, got: \"$got\"\n";
   $keep_c = $keep_c_fail unless $keep_c;
-  #unlink($test, $cfile, $exe) unless $keep_c;
   unlink ($test, $cfile, $exe) if !$keep_c;
   return 0;
 }
