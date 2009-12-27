@@ -6,7 +6,6 @@ BEGIN {
     @INC = ('.', '../lib');
   } else {
     unshift @INC, 't';
-    #push @INC, "blib/arch", "blib/lib";
   }
   require 'test.pl'; # for run_perl()
 }
@@ -16,13 +15,12 @@ my $ITHREADS  = ($Config{useithreads});
 
 prepare_c_tests();
 
-my @todo = ();   #5.8.9
-@todo = (27)       if !$ITHREADS;
-@todo = (15,27)    if $] < 5.007;
-@todo = ()         if $] >= 5.010;
-@todo = (15)       if $] >= 5.010 and !$ITHREADS;
-@todo = (15,16)    if $] >= 5.011;
+my @todo = (10,12,15,19,25);   #5.8.9
+@todo = (10,12,19,25,27)       if !$ITHREADS;
+@todo = (10,12,15,19,25,27,29) if $] < 5.007;
+@todo = (10,12,19,25)          if $] >= 5.010;
+@todo = (10,12,15,16,19,25)    if $] >= 5.011;
 
 my @skip = (27); # out of memory
 
-run_c_tests("C,-O2", \@todo, \@skip);
+run_c_tests("C,-O4", \@todo, \@skip);
