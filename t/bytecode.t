@@ -51,10 +51,10 @@ if ($DEBUGGING) {
   }
 }
 my @todo = ();
-@todo = (3,6,8..10,12,15,16,18,25..28,31) if $] < 5.007; # CORE failures, ours not yet enabled
+@todo = (3,6,8..10,12,15,16,18,26,28,31) if $] < 5.007; # CORE failures, ours not yet enabled
 @todo = ()  			if $] >= 5.010;
 @todo = (9,10,12,27,29)  	if $] >= 5.010 and !$ITHREADS;
-@todo = (9,10,12,16,21,27,29,31) if $] >= 5.011;
+@todo = (9,10,12,16,21,27,29)  if $] >= 5.011;
 
 my @skip = (20,21,27,29) if $] >= 5.010;
 
