@@ -16,10 +16,9 @@ my $ITHREADS  = ($Config{useithreads});
 prepare_c_tests();
 
 my @todo = (10,12,15,19,25);	#5.8.9
-@todo = (10,12,19,25,27)       if !$ITHREADS;
+@todo    = (10,12,19,25,27)    if !$ITHREADS;
 @todo = (10,12,15,19,25,27)    if $] < 5.007;
 @todo = (10,12,19,25)          if $] >= 5.010;
-@todo = (10,12,15,19,25)       if $] >= 5.010 and !$ITHREADS;
 
 my @skip = (27); # out of memory
 
