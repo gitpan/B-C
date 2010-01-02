@@ -69,6 +69,7 @@ t/b.t
 t/bblock.t
 t/bytecode.t
 t/c.t
+t/c_allow_opts.t
 t/c_argv.t
 t/c_o1.t
 t/c_o2.t

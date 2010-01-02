@@ -1,5 +1,6 @@
 * Fixes
 
+5.10 CC PP_EVAL scopestack_idx (12)
 CC backend: goto (needs test), 
 sort with non-default comparison. 
 last for non-loop blocks (needs simplier test, test 29).
@@ -34,7 +35,6 @@ ByteLoader compatibility: version, platform. eventually Bytecode version
 
 * Optimisations
 
-fix optimize_ppaddr for B::CC 
 collect static strings beforehand, such as GvNAMEs, COP FILENAME (for pre 5.10)
   and GV method names package::name. (partially done)
 proper static init of PMOP SV's (only works dynamic >= 5.10)
@@ -42,10 +42,12 @@ proper static init of PVBM/FBM (almost done, just 5.8.9 not)
 collapse LISTOPs to UNOPs or BASEOPs
 compile-time qw(), constant subs
 global analysis of variables, type hints etc.
+  understand type attrs
+    my $i : Cint;
   Devel::TypeCheck instead of magic variable _ir, ... suffices
   e.g. mark IVonly SV's and magic/flags change functions and 
-  optimize all op subtrees for the compiled backends to use direct ints
+  optimize all op subtrees for the compiled backends to use direct ints.
 demand-loaded bytecode (leader of each basic block replaced by an op
   which loads in bytecode for its block)
 fast sub calls for CC backend
-tailcall optimization (entersub->leavesub => goto)
+tailcall optimization (entersub -> leavesub => goto)

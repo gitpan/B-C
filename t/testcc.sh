@@ -3,10 +3,10 @@
 # for p in 5.6.2 5.8.8-nt 5.8.9d 5.10.1d 5.10.1d-nt 5.11.2d 5.11.2d-nt; do make -s clean; echo perl$p; perl$p Makefile.PL; t/testc.sh -q -O0 31; done
 # quiet c only: t/testc.sh -q -O0
 function help {
-  echo "t/testc.sh [OPTIONS] [1-29]"
-  echo " -D debugflags      for O=C or O=CC. Default: C,-DcOACMSGpu,-v resp. CC,-DoOscprSql,-v"
-  echo " -O 0|1|2|3         optimization level"
-  echo " -B static|dynamic  pass to cc_harness"
+  echo "t/testc.sh [OPTIONS] [1-$ntests]"
+  echo " -D<debugflags>     for O=C or O=CC. Default: C,-DcOACMSGpu,-v resp. CC,-DoOscprSql,-v"
+  echo " -O<0-4>            optimization level"
+  echo " -B<static|dynamic> pass to cc_harness"
   echo " -c                 continue on errors"
   echo " -k                 keep temp. files on PASS"
   echo " -E                 dump preprocessed source file with cc -E as _E.c"
@@ -14,7 +14,7 @@ function help {
   echo " -a                 all. undo -Du. Unsilence scanning unused sub"
   echo " -q                 quiet"
   echo " -h                 help"
-  echo "Without arguments try all 29 tests. Without Option -Ox try all three optimizations."
+  echo "Without arguments try all $ntests tests. Without Option -Ox try -O0 to -O2 optimizations."
 }
 
 # use the actual perl from the Makefile (perl5.8.8, 
@@ -46,8 +46,8 @@ OCMDO4="$(echo $OCMD|sed -e s/C,-D/C,-O4,-D/)"
 CONT=
 # 5.6: rather use -B static
 #CCMD="$PERL script/cc_harness -g3"
-# rest
-CCMD="$PERL script/cc_harness -g3 -Bdynamic"
+# rest. -DALLOW_PERL_OPTIONS for -Dtlv
+CCMD="$PERL script/cc_harness -g3 -Bdynamic -DALLOW_PERL_OPTIONS"  
 LCMD=
 # On some perls I also had to add $archlib/DynaLoader/DynaLoader.a to libs in Config.pm
 }
@@ -138,7 +138,7 @@ function ctest {
 	    pass "./$o" "'$str' => '$res'"
             if [ -z $KEEP ]; then rm ${o}_E.c ${o}.c ${o} 2>/dev/null; fi
 	    runopt $o 1 && \
-	    runopt $o 2
+	    runopt $o 2 
 	    #runopt $o 3 && \
 	    #runopt $o 4 && \
 	    true
@@ -149,7 +149,7 @@ function ctest {
     fi
 }
 
-ntests=31
+ntests=32
 declare -a tests[$ntests]
 declare -a result[$ntests]
 tests[1]="print 'hi'"
@@ -168,22 +168,24 @@ tests[7]='@z = split /:/,"b:r:n:f:g"; print @z'
 result[7]='brnfg';
 tests[8]='sub AUTOLOAD { print 1 } &{"a"}()'
 result[8]='1';
-tests[9]='my $l = 3; $x = sub { print $l }; &$x'
+tests[9]='my $l_i = 3; $x = sub { print $l_i }; &$x'
 result[9]='3';
-tests[10]='my $i = 1; 
+tests[10]='my $i_i = 1; 
 my $foo = sub {
-  $i = shift if @_
-}; print $i; 
-print &$foo(3),$i;'
+  $i_i = shift if @_
+}; print $i_i; 
+print &$foo(3),$i_i;'
 result[10]='133';
+# index: do fbm_compile or not
 tests[11]='$x="Cannot use"; print index $x, "Can"'
 result[11]='0';
-tests[12]='my $i=6; eval "print \$i\n"'
+tests[12]='my $i_i=6; eval "print \$i_i\n"'
 result[12]='6';
 tests[13]='BEGIN { %h=(1=>2,3=>4) } print $h{3}'
 result[13]='4';
 tests[14]='open our $T,"a"; print "ok";'
 result[14]='ok';
+# __DATA__ handles still broken non-threaded 5.10
 tests[15]='print <DATA>
 __DATA__
 a
@@ -192,18 +194,18 @@ result[15]='a
 b';
 tests[16]='BEGIN{tie @a, __PACKAGE__;sub TIEARRAY {bless{}} sub FETCH{1}}; print $a[1]'
 result[16]='1';
-tests[17]='my $i=3; print 1 .. $i'
+tests[17]='my $i_ir=3; print 1 .. $i_ir'
 result[17]='123';
 # custom key sort
 tests[18]='my $h = { a=>3, b=>1 }; print sort {$h->{$a} <=> $h->{$b}} keys %$h'
 result[18]='ba';
-# fool the sort optimizer by $p, pp_sort works ok on CC
+# fool the sort optimizer by my $p, pp_sort works ok on CC
 tests[19]='print sort { my $p; $b <=> $a } 1,4,3'
 result[19]='431';
 # not repro: something like this is broken in original 5.6 (Net::DNS::ZoneFile::Fast)
 tests[20]='$a="abcd123";my $r=qr/\d/;print $a =~ $r;'
 result[20]='1';
-# broken on early alpha and 5.10
+# broken on early alpha and 5.10: run-time labels.
 tests[21]='sub skip_on_odd{next NUMBER if $_[0]% 2}NUMBER:for($i=0;$i<5;$i++){skip_on_odd($i);print $i;}'
 result[21]='024';
 # broken in original perl 5.6
@@ -222,11 +224,11 @@ result[25]="0 1 2 3`$PERL -e'print (($] < 5.007) ? q( 4 5) : q())'` 4321";
 # lvalue sub
 tests[26]='sub a:lvalue{my $a=26; ${\(bless \$a)}}sub b:lvalue{${\shift}}; print ${a(b)}';
 result[26]="26";
-# import test, AUTOLOAD goto xsub
+# xsub constants
 tests[27]='use Fcntl; print "ok" if ( &Fcntl::O_WRONLY );'
 result[27]='ok'
 # require $fname
-tests[28]='my($fname,$tmp_fh);while(!open($tmp_fh,">",($fname=q{cctest_27.} . rand(999999999999)))){$bail++;die "Failed to create a tmp file after 500 tries" if ($bail>500);}print {$tmp_fh} q{$x="ok";1;};close($tmp_fh);require $fname;unlink($fname);print $x;'
+tests[28]='my($fname,$tmp_fh);while(!open($tmp_fh,">",($fname=q{cctest_27.} . rand(999999999999)))){$bail++;die "Failed to create a tmp file after 500 tries" if $bail>500;}print {$tmp_fh} q{$x="ok";1;};close($tmp_fh);require $fname;unlink($fname);print $x;'
 result[28]='ok'
 # use test
 tests[29]='use IO;print "ok"'
@@ -237,6 +239,9 @@ result[30]='456123E0'
 # AUTOLOAD w/o goto xsub
 tests[31]='package MockShell;sub AUTOLOAD{my $p=$AUTOLOAD;$p=~s/.*:://;print(join(" ",$p,@_),";");} package main; MockShell::date();MockShell::who("am","i");MockShell::ls("-l");'
 result[31]='date;who am i;ls -l;'
+# CC types and arith
+tests[32]='my ($r_i,$i_i,$d_d)=(0,2,3.0); $r_i=$i_i*$i_i; $r_i*=$d_d; print $r_i;'
+result[32]='12'
 
 init
 
@@ -254,7 +259,7 @@ do
     OCMDO2="$(echo $OCMDO2|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
     OCMDO3="$(echo $OCMDO3|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
     OCMDO4="$(echo $OCMDO4|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
-    CCMD="$PERL script/cc_harness -q -g3 -Bdynamic"
+    CCMD="$PERL script/cc_harness -q -g3 -Bdynamic -DALLOW_PERL_OPTIONS"
   fi
   if [ "$opt" = "o" ]; then Mblib=" "; init; fi
   if [ "$opt" = "c" ]; then CONT=1; fi
