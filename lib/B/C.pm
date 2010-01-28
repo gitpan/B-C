@@ -1,7 +1,7 @@
 #      C.pm
 #
 #      Copyright (c) 1996, 1997, 1998 Malcolm Beattie
-#      Copyright (c) 2008, 2009 Reini Urban
+#      Copyright (c) 2008, 2009, 2010 Reini Urban
 #
 #      You may distribute under the terms of either the GNU General Public
 #      License or the Artistic License, as specified in the README file.
@@ -9,7 +9,7 @@
 
 package B::C;
 
-our $VERSION = '1.15';
+our $VERSION = '1.16';
 
 package B::C::Section;
 
@@ -166,8 +166,10 @@ our %REGEXP;
 }
 
 @ISA       = qw(Exporter);
-@EXPORT_OK = qw(output_all output_boilerplate output_main mark_unused
-  init_sections set_callback save_unused_subs objsym save_context fixup_ppaddr save_sig);
+@EXPORT_OK =
+  qw(output_all output_boilerplate output_main mark_unused
+     init_sections set_callback save_unused_subs objsym save_context fixup_ppaddr
+     save_sig svop_or_padop_pv);
 # for 5.6 better use the native B::C
 # 5.6.2 works fine though.
 use B
@@ -199,6 +201,7 @@ my $hek_index     = 0;
 my $anonsub_index = 0;
 my $initsub_index = 0;
 
+my $package_pv;
 my %symtable;
 my (%strtable, %hektable);
 my %xsub;
@@ -275,6 +278,19 @@ my %OP_COP = ( opnumber('nextstate') => 1 );
 $OP_COP{ opnumber('setstate') } = 1 if $] > 5.005003 and $] < 5.005062;
 $OP_COP{ opnumber('dbstate') }  = 1 unless $PERL511;
 warn %OP_COP if $debug{cops};
+
+sub svop_or_padop_pv {
+  my $op = shift;
+  return "" unless $op->can("sv");
+  my $sv = $op->sv;
+  if ($$sv) {
+    return $sv->PV if $sv->can("PV");
+  } else {
+    my @c = comppadlist->ARRAY;
+    my @pad = $c[1]->ARRAY;
+    return $pad[$op->targ]->PV if $pad[$op->targ] and $pad[$op->targ]->can("PV");
+  }
+}
 
 sub savesym {
   my ( $obj, $value ) = @_;
@@ -518,6 +534,14 @@ my $opsect_common =
 
 sub B::OP::_save_common {
   my $op = shift;
+  if ($op->next
+      and $op->next->can('name')
+      and $op->next->name eq 'method_named'
+     ) {
+    # need to store away the pkg pv
+    $package_pv = svop_or_padop_pv($op);
+    warn "save package_pv \"$package_pv\" for method_name\n" if $debug{cv};
+  }
   return sprintf(
     "s\\_%x, s\\_%x, %s",
     ${ $op->next },
@@ -725,6 +749,17 @@ sub B::PVOP::save {
   savesym( $op, "(OP*)&pvop_list[$ix]" );
 }
 
+# method_named is in 5.6.1
+sub method_named {
+  my $name = shift;
+  # Note: the pkg PV is at PL_stack_base+TOPMARK+1,
+  # the previous op->sv->PVX. We store it away in op->_save_common.
+  my $stash = $package_pv ? $package_pv."::" : "main::";
+  $name = $stash . $name;
+  warn "save method_name \"$name\"\n" if $debug{cv};
+  return svref_2object( \&{$name} );
+}
+
 sub B::SVOP::save {
   my ( $op, $level ) = @_;
   my $sym = objsym($op);
@@ -742,6 +777,10 @@ sub B::SVOP::save {
     unless $B::C::optimize_ppaddr;
   $init->add("svop_list[$ix].op_sv = $svsym;")
     unless $is_const_addr;
+  if ($op->name eq 'method_named') {
+    my $cv = method_named(svop_or_padop_pv($op));
+    $cv->save;
+  }
   savesym( $op, "(OP*)&svop_list[$ix]" );
 }
 
@@ -754,8 +793,10 @@ sub B::PADOP::save {
   my $ix = $padopsect->index;
   $init->add( sprintf( "padop_list[$ix].op_ppaddr = %s;", $op->ppaddr ) )
     unless $B::C::optimize_ppaddr;
-  # padix already initialized
-  # $init->add(sprintf("padop_list[$ix].op_padix = %ld;", $op->padix)); # was commented
+  if ($op->name eq 'method_named') {
+    my $cv = method_named(svop_or_padop_pv($op));
+    $cv->save;
+  }
   savesym( $op, "(OP*)&padop_list[$ix]" );
 }
 
@@ -1412,7 +1453,7 @@ sub B::PVMG::save_magic {
       if ($PERL510) {
         $init->add( split /\n/,
           sprintf
-            <<CODE, $mg->pmflags, $$sv, cchar($type), cstring($ptr), $len );
+            <<CODE, $pmop->pmflags, $$sv, cchar($type), cstring($ptr), $len );
 {
     REGEXP* rx = CALLREGCOMP($resym, %d);
     sv_magic((SV*)s\\_%x, (SV*)rx, %s, %s, %d);
@@ -1672,7 +1713,7 @@ sub B::CV::save {
       if $debug{cv};
     # XXX missing cv_start for AUTOLOAD on 5.8
     $startfield = objsym($root->next) unless $startfield; # 5.8 autoload has only root
-    $startfield = "Nullany" unless $startfield;
+    $startfield = "0" unless $startfield;
     if ($$padlist) {
       warn sprintf( "saving PADLIST 0x%x for CV 0x%x\n", $$padlist, $$cv )
         if $debug{cv};
@@ -1730,18 +1771,18 @@ sub B::CV::save {
   elsif ($PERL56) {
     #$xpvcvsect->comment('pv cur len off nv magic mg_stash cv_stash start root xsub xsubany cv_gv cv_file cv_depth cv_padlist cv_outside cv_flags');
     $symsect->add(
-      sprintf("XPVCVIX$xpvcv_ix\t%s, %u, 0, %d, %s, 0, Nullhv, Nullhv, %s, s\\_%x, $xsub, $xsubany, Nullgv, \"\", %d, s\\_%x, (CV*)s\\_%x, 0x%x",
-        cstring($pv),      length($pv),    $cv->IVX,
+      sprintf("XPVCVIX$xpvcv_ix\t%s, %u, %u, %d, %s, 0, Nullhv, Nullhv, %s, s\\_%x, $xsub, $xsubany, Nullgv, \"\", %d, s\\_%x, (CV*)s\\_%x, 0x%x",
+        cstring($pv), length($pv),length($pv),$cv->IVX,
         $cv->NVX,  $startfield,       $$root, $cv->DEPTH,
         $$padlist, ${ $cv->OUTSIDE }, $cv->CvFLAGS
       )
     );
   }
   else {
-    #$xpvcvsect->comment('pv cur len off nv magic mg_stash cv_stash start root xsub xsubany cv_gv cv_file cv_depth cv_padlist cv_outside cv_flags outside_seq');
+    #$xpvcvsect->comment('pv cur len off nv           magic mg_stash cv_stash start root xsub xsubany cv_gv cv_file cv_depth cv_padlist cv_outside cv_flags outside_seq');
     $symsect->add(
-      sprintf("XPVCVIX$xpvcv_ix\t%s, %u, 0, %d, %s, 0, Nullhv, Nullhv, %s, s\\_%x, $xsub, $xsubany, Nullgv, \"\", %d, s\\_%x, (CV*)s\\_%x, 0x%x, 0x%x",
-        cstring($pv),      length($pv),    $cv->IVX,
+      sprintf("XPVCVIX$xpvcv_ix\t%s, %u, %u, %d, %s, 0, Nullhv, Nullhv, %s, s\\_%x, $xsub, $xsubany, Nullgv, \"\", %d, s\\_%x, (CV*)s\\_%x, 0x%x, 0x%x",
+        cstring($pv),      length($pv), length($pv), $cv->IVX,
         $cv->NVX,  $startfield,       $$root, $cv->DEPTH,
         $$padlist, ${ $cv->OUTSIDE }, $cv->CvFLAGS,   $cv->OUTSIDE_SEQ
       )
@@ -1971,6 +2012,9 @@ sub B::GV::save {
         if $package and exists ${"$package\::"}{AUTOLOAD};
       svref_2object( \*{"$package\::CLONE"} )->save
         if $package and exists ${"$package\::"}{CLONE};
+      # wrong. This causes B::C::bootstrap be added without XSLoader. or set $use_xsloader = 1
+      #svref_2object( \*{"$package\::bootstrap"} )->save
+      #	if $package and exists ${"$package\::"}{bootstrap};
     }
     if ( $] > 5.009 ) {
       # TODO implement heksect to place all heks at the beginning
@@ -2083,7 +2127,7 @@ sub B::AV::save {
       $acc .= "\t*svp++ = (SV*)" . $array[$i]->save . ";\n\t";
     }
     $init->no_split;
-    # Statically initialize the array as the initial av_extend() is very expensive
+    # Faster initialize the array as the initial av_extend() is very expensive
     if ($B::C::av_init) {
       $init->add(
                  "{", "\tSV **svp;",
@@ -2103,7 +2147,7 @@ sub B::AV::save {
       $init->add( substr( $acc, 0, -2 ) );
       $init->add( "}" );
     }
-    else { # unoptimized
+    else { # unoptimized with the full av_extend()
       $init->add(
                  "{", "\tSV **svp;",
                  "\tAV *av = (AV*)&sv_list[$sv_list_index];",
@@ -2136,6 +2180,8 @@ sub B::HV::save {
   if ($name) {
 
     # It's a stash
+    warn sprintf( "saving stash HV \"%s\" 0x%x MAX=%d\n",
+                  $name, $$hv, $hv->MAX ) if $debug{hv};
 
     # A perl bug means HvPMROOT isn't altered when a PMOP is freed. Usually
     # the only symptom is that sv_reset tries to reset the PMf_USED flag of
@@ -2147,8 +2193,8 @@ sub B::HV::save {
     # XXX Beware of weird package names containing double-quotes, \n, ...?
     $init->add(qq[hv$hv_index = gv_stashpv("$name", TRUE);]);
     if ($adpmroot) {
-      $init->add(
-        sprintf( "HvPMROOT(hv$hv_index) = (PMOP*)s\\_%x;", $adpmroot ) );
+      $init->add(sprintf( "HvPMROOT(hv$hv_index) = (PMOP*)s\\_%x;",
+			  $adpmroot ) );
     }
     $sym = savesym( $hv, "hv$hv_index" );
     $hv_index++;
@@ -2157,58 +2203,65 @@ sub B::HV::save {
 
   # It's just an ordinary HV
   if ($PERL510) {
-    # 5.9: nvu fill max ivu mg stash.
-    $xpvhvsect->add( sprintf( "{0}, 0, %d, {0}, {0}, Nullhv", $hv->MAX ) );
-    $svsect->add(
-      sprintf(
-        "&xpvhv_list[%d], %lu, 0x%x, {%s}", # $hv->ARRAY
-        $xpvhvsect->index, $hv->REFCNT, $hv->FLAGS, '0'
-      )
-    );
-    # riter went to a private _aux struct
-    $init->add(
-      sprintf( "HvRITER_set(&sv_list[%d], %d);", $svsect->index, $hv->RITER ) );
-    # $init->add(sprintf("HvEITER_set(&sv_list[%d], 0x%x);", $svsect->index, $hv->EITER));
+    $xpvhvsect->comment( "gvstash fill max keys mg stash" );
+    $xpvhvsect->add(sprintf( "{0}, %d, %d, {%d}, {0}, Nullhv",
+			     0, $hv->MAX, 0 ));
+    $svsect->add(sprintf("&xpvhv_list[%d], %lu, 0x%x, {0}",
+			 $xpvhvsect->index, $hv->REFCNT, $hv->FLAGS));
+    if ($hv->MAGICAL) { # riter,eiter only for magic required
+      $sym = sprintf("&sv_list[%d]", $svsect->index);
+      my $hv_max = $hv->MAX + 1;
+      # riter required, new _aux struct at the end of the HvARRAY. allocate ARRAY also.
+      $init->add("{\tHE **a; struct xpvhv_aux *aux;",
+		 "\tNewx(a, $hv_max, HE*);",
+		 "\tHvARRAY($sym) = a;",
+		 "\tZero(HvARRAY($sym), $hv_max, HE*);",
+		 "\tNewx(aux, 1, struct xpvhv_aux);",
+		 "\tHvARRAY($sym)[$hv_max] = (HE*)aux;",
+		 sprintf("\tHvRITER_set($sym, %d);", $hv->RITER),
+		 "\tHvEITER_set($sym, NULL); }");
+    }
   }
   else {
-    # 5.8: array fill max keys nv mg stash riter eiter pmroot name
-    $xpvhvsect->add(
-      sprintf(
-        "0, 0, %d, 0, 0.0, 0, Nullhv, %d, 0, 0, 0",
-        $hv->MAX, $hv->RITER
-      )
-    );
-    $svsect->add(
-      sprintf(
-        "&xpvhv_list[%d], %lu, 0x%x",
-        $xpvhvsect->index, $hv->REFCNT, $hv->FLAGS
-      )
-    );
+    $xpvhvsect->comment( "array fill max keys nv mg stash riter eiter pmroot name" );
+    $xpvhvsect->add(sprintf( "0, 0, %d, 0, 0.0, 0, Nullhv, %d, 0, 0, 0",
+			     $hv->MAX, $hv->RITER));
+    $svsect->add(sprintf( "&xpvhv_list[%d], %lu, 0x%x",
+			  $xpvhvsect->index, $hv->REFCNT, $hv->FLAGS));
   }
+  warn sprintf( "saving HV 0x%x MAX=%d\n",
+                $$hv, $hv->MAX ) if $debug{hv};
   my $sv_list_index = $svsect->index;
-  my @contents      = $hv->ARRAY;
+  my @contents     = $hv->ARRAY;
+  # protect against recursive self-reference
+  # i.e. with use Moose at stash Class::MOP::Class::Immutable::Trait
+  # value => rv => cv => ... => rv => same hash
+  $sym = savesym( $hv, "(HV*)&sv_list[$sv_list_index]" );
   if (@contents) {
     my $i;
     for ( $i = 1 ; $i < @contents ; $i += 2 ) {
-      $contents[$i] = $contents[$i]->save;
+      my $sv = $contents[$i];
+      warn sprintf("HV recursion? with $sv -> %s\n", $sv->RV)
+        if $sv->isa("B::RV")
+          #and $sv->RV->isa('B::CV')
+          and defined objsym($sv)
+          and $debug{hv};
+      $contents[$i] = $sv->save;
     }
     $init->no_split;
-    $init->add( "{", "\tHV *hv = (HV*)&sv_list[$sv_list_index];" );
+    $init->add( "{", "\tHV *hv = $sym;" );
     while (@contents) {
       my ( $key, $value ) = splice( @contents, 0, 2 );
-      $init->add(
-        sprintf(
-          "\thv_store(hv, %s, %u, %s, %s);",
-          cstring($key), length( pack "a*", $key ),
-          "(SV*)$value", hash($key)
-        )
-      );
+      $init->add(sprintf( "\thv_store(hv, %s, %u, %s, %s);",
+			  cstring($key), length( pack "a*", $key ),
+			  "(SV*)$value", hash($key) ));
+      warn sprintf( "  HV key %s=%s\n", $key, $value) if $debug{hv};
     }
     $init->add("}");
     $init->split;
   }
   $hv->save_magic();
-  return savesym( $hv, "(HV*)&sv_list[$sv_list_index]" );
+  return $sym;
 }
 
 sub B::IO::save_data {
@@ -2518,27 +2571,27 @@ sub init_op_warn {
 
   # for reasons beyond imagination, MSVC5 considers pWARN_ALL non-const
   $init->add( split /\n/, <<EOT );
-    {
-        int i;
+{
+    register int i;
 
-        for( i = 0; i < ${num}; ++i )
+    for( i = 0; i < ${num}; ++i )
+    {
+        switch( (int)(${op_list}\[i].cop_warnings) )
         {
-            switch( (int)(${op_list}\[i].cop_warnings) )
-            {
-            case 1:
-                ${op_list}\[i].cop_warnings = pWARN_ALL;
-                break;
-            case 2:
-                ${op_list}\[i].cop_warnings = pWARN_NONE;
-                break;
-            case 3:
-                ${op_list}\[i].cop_warnings = pWARN_STD;
-                break;
-            default:
-                break;
-            }
+        case 1:
+            ${op_list}\[i].cop_warnings = pWARN_ALL;
+            break;
+        case 2:
+            ${op_list}\[i].cop_warnings = pWARN_NONE;
+            break;
+        case 3:
+            ${op_list}\[i].cop_warnings = pWARN_STD;
+            break;
+        default:
+            break;
         }
     }
+}
 EOT
 }
 
@@ -2718,10 +2771,10 @@ EOT
 static void
 xs_init(pTHX)
 {
-    char *file = __FILE__;
-    /* dXSUB_SYS; */
-    dTARG;
-    dSP;
+	char *file = __FILE__;
+	/* dXSUB_SYS; */
+	dTARG;
+	dSP;
 EOT
 
   #if ($staticxs) { #FIXME!
@@ -2770,10 +2823,9 @@ EOT
 static void
 dl_init(pTHX)
 {
-    /* char *file = __FILE__; */
-    dTARG;
-    /* dSP; */
+	/* char *file = __FILE__; */
 EOT
+  print "\tdTARG;\n\tdSP;\n" if @DynaLoader::dl_modules;
   print("/* Dynamicboot strapping code*/\n\tSAVETMPS;\n");
   print("\ttarg=sv_newmortal();\n");
   foreach my $stashname (@DynaLoader::dl_modules) {
@@ -3168,7 +3220,8 @@ sub compile {
     'use-script-name' => \$use_perl_script_name,
     'save-sig-hash'   => \$B::C::save_sig,
     'cop'             => \$optimize_cop, # XXX very unsafe!
-					 # Better do it in CC, but get rid of NULL cops also there
+					 # Better do it in CC, but get rid of
+					 # NULL cops also there.
   );
   my %optimization_map = (
     0 => [qw()],                # special case
@@ -3208,6 +3261,9 @@ OPTION:
         }
         elsif ( $arg eq "A" ) {
           $debug{av}++;
+        }
+        elsif ( $arg eq "H" ) {
+          $debug{hv}++;
         }
         elsif ( $arg eq "C" ) {
           $debug{cv}++;
@@ -3383,6 +3439,10 @@ B<COPs>, prints COPs as processed (incl. file & line num)
 
 prints B<AV> information on saving
 
+=item B<-DH>
+
+prints B<HV> information on saving
+
 =item B<-DC>
 
 prints B<CV> information on saving
@@ -3434,6 +3494,11 @@ Optimize the initialization of op_ppaddr.
 
 Optimize the initialization of cop_warnings.
 
+=item B<-fav-init>
+
+Faster pre-initialization of AVs (arrays)
+
+
 =item B<-fuse-script-name>
 
 Use the script name instead of the program name as $0.
@@ -3442,16 +3507,15 @@ Use the script name instead of the program name as $0.
 
 Save compile-time modifications to the %SIG hash.
 
+
 =item B<-fcop>
+
+DO NOT USE YET!
 
 Omit COP info (nextstate without labels, unneeded NULL ops,
 files, linenumbers) for ~10% faster execution and less space,
 but warnings and errors will have no file and line infos.
 It will most likely not work yet. I<(was -fbypass-nullops in earlier compilers)>
-
-=item B<-fav-init>
-
-Faster pre-initialization of AVs (arrays)
 
 =back
 
@@ -3511,22 +3575,15 @@ help make use of this compiler.
 
 =head1 BUGS
 
-A few.
-Current status: experimental.
+Current status: A few known bugs.
 
 5.6:
     reading from __DATA__ handles (15)
     AUTOLOAD xsubs (27)
 
-5.8:
-    AUTOLOAD xsubs (27)
-
 5.10:
     reading from __DATA__ handles (15) non-threaded
     destruction of static pvs for -O1
-
-5.11:
-    reading from __DATA__ handles (15)
 
 =head1 AUTHOR
 

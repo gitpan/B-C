@@ -777,6 +777,7 @@ sub tests {
     open TEST, "< $in" or die "Cannot open $in";
     my @tests = split /\n####+.*##\n/, <TEST>;
     close TEST;
+    delete $tests[$#tests] unless $tests[$#tests];
     @tests;
 }
 
@@ -801,7 +802,8 @@ sub run_cc_test {
     my $Mblib = $] >= 5.009005 ? "-Mblib" : ""; # test also the CORE B in older perls
     unless ($Mblib) {           # check for -Mblib from the testsuite
         if (grep { m{blib(/|\\)arch$} } @INC) {
-            $Mblib = "-Iblib/arch -Iblib/lib";  # forced -Mblib via cmdline without printing to stderr
+            $Mblib = "-Iblib/arch -Iblib/lib";  # forced -Mblib via cmdline without
+            					# printing to stderr
             $backend = "-qq,$backend,-q" unless $ENV{TEST_VERBOSE};
         }
     } else {
@@ -885,12 +887,50 @@ sub run_c_tests {
     my %skip = map { $_ => 1 } @skip;
     my @tests = tests();
 
-    print "1..".($#tests+1)."\n";
+    # add some CC specific tests after 100
+    # perl -lne "/^\s*sub pp_(\w+)/ && print \$1" lib/B/CC.pm > ccpp
+    # for p in `cat ccpp`; do echo -n "$p "; grep -m1 " $p[(\[ ]" *.concise; done
+    # 
+    # grep -A1 "coverage: ny" lib/B/CC.pm|grep sub
+    # pp_stub pp_cond_expr pp_dbstate pp_reset pp_stringify pp_ncmp pp_preinc
+    # pp_formline pp_enterwrite pp_leavewrite pp_entergiven pp_leavegiven
+    # pp_dofile pp_grepstart pp_mapstart pp_grepwhile pp_mapwhile
+    if ($backend =~ /^CC/) {
+        local $/;
+        my $cctests = <<'CCTESTS';
+my ($r_i,$i_i,$d_d)=(0,2,3.0); $r_i=$i_i*$i_i; $r_i*=$d_d; print $r_i;
+>>>>
+12
+######### 101 - CC types and arith ###############
+if ($x eq "2"){}else{print "ok"}
+>>>>
+ok
+######### 102 - CC cond_expr,stub,scope ############
+require B; my $x=1e1; my $s="$x"; print ref B::svref_2object(\$s)
+>>>>
+B::PV
+######### 103 - CC stringify srefgen ############
+CCTESTS
+        my $i = 100;
+        for (split /\n####+.*##\n/, $cctests) {
+            next unless $_;
+            $tests[$i] = $_;
+            $i++;
+        }
+    }
+
+    print "1..".(scalar @tests)."\n";
 
     my $cnt = 1;
     for (@tests) {
         my $todo = $todo{$cnt} ? "#TODO" : "#";
-        # skip subsequent tests 29 on MSVC. 7:30min!
+        # skip empty CC holes to have the same test indices in STATUS and t/testcc.sh
+        unless ($_) {
+            print sprintf("ok %d # skip hole for CC\n", $cnt);
+            $cnt++;
+            next;
+        }
+        # only once. skip subsequent tests 29 on MSVC. 7:30min!
         if ($cnt == 29 and $Config{cc} =~ /^cl/i and $backend ne 'C') {
             $todo{$cnt} = $skip{$cnt} = 1;
         }
@@ -908,6 +948,6 @@ sub run_c_tests {
 # Local Variables:
 #   mode: cperl
 #   cperl-indent-level: 4
-#   fill-column: 100
+#   fill-column: 78
 # End:
 # vim: expandtab shiftwidth=4:

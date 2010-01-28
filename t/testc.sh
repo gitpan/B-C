@@ -10,11 +10,11 @@ function help {
   echo " -c                 continue on errors"
   echo " -k                 keep temp. files on PASS"
   echo " -E                 dump preprocessed source file with cc -E as _E.c"
-  echo " -o                 orig. no -Mblib. only for 5.6 and 5.8"
+  echo " -o                 orig. no -Mblib, use installed modules (5.6, 5.8)"
   echo " -a                 all. undo -Du. Unsilence scanning unused sub"
   echo " -q                 quiet"
   echo " -h                 help"
-  echo "Without arguments try all $ntests tests. Without Option -Ox try -O0 to -O2 optimizations."
+  echo "Without arguments try all $ntests tests. Without Option -Ox try -O0 to -O3 optimizations."
 }
 
 # use the actual perl from the Makefile (perl5.8.8, 
@@ -34,8 +34,8 @@ if [ -z $Mblib ]; then
         OCMD="$PERL $Mblib -MO=CC,-DrOsplt,"
     fi
 else
-    OCMD="$PERL $Mblib -MO=C,-DcOACMSGpu,-v,"
-    if [ $BASE = "testcc.sh" ]; then 
+    OCMD="$PERL $Mblib -MO=C,-DcoOSAHGCMpu,-v,"
+    if [ $BASE = "testcc.sh" ]; then
         OCMD="$PERL $Mblib -MO=CC,-DoOscprSql,-v,"
     fi
 fi
@@ -47,7 +47,7 @@ CONT=
 # 5.6: rather use -B static
 #CCMD="$PERL script/cc_harness -g3"
 # rest. -DALLOW_PERL_OPTIONS for -Dtlv
-CCMD="$PERL script/cc_harness -g3 -Bdynamic -DALLOW_PERL_OPTIONS"  
+CCMD="$PERL script/cc_harness -d -g3 -Bdynamic -DALLOW_PERL_OPTIONS"  
 LCMD=
 # On some perls I also had to add $archlib/DynaLoader/DynaLoader.a to libs in Config.pm
 }
@@ -138,8 +138,8 @@ function ctest {
 	    pass "./$o" "'$str' => '$res'"
             if [ -z $KEEP ]; then rm ${o}_E.c ${o}.c ${o} 2>/dev/null; fi
 	    runopt $o 1 && \
-	    runopt $o 2 
-	    #runopt $o 3 && \
+	    runopt $o 2  && \
+	    runopt $o 3
 	    #runopt $o 4 && \
 	    true
 	else
@@ -149,9 +149,12 @@ function ctest {
     fi
 }
 
-ntests=32
+ntests=35
 declare -a tests[$ntests]
 declare -a result[$ntests]
+ncctests=3
+declare -a cctests[$((100+$ncctests))]
+declare -a ccresult[$((100+$ncctests))]
 tests[1]="print 'hi'"
 result[1]='hi';
 tests[2]="for (1,2,3) { print if /\d/ }"
@@ -228,7 +231,7 @@ result[26]="26";
 tests[27]='use Fcntl; print "ok" if ( &Fcntl::O_WRONLY );'
 result[27]='ok'
 # require $fname
-tests[28]='my($fname,$tmp_fh);while(!open($tmp_fh,">",($fname=q{cctest_27.} . rand(999999999999)))){$bail++;die "Failed to create a tmp file after 500 tries" if $bail>500;}print {$tmp_fh} q{$x="ok";1;};close($tmp_fh);require $fname;unlink($fname);print $x;'
+tests[28]='my($fname,$tmp_fh);while(!open($tmp_fh,">",($fname=q{cctest28_} . rand(999999999999)))){$bail++;die "Failed to create a tmp file after 500 tries" if $bail>500;}print {$tmp_fh} q{$x="ok";1;};close($tmp_fh);require $fname;unlink($fname);print $x;'
 result[28]='ok'
 # use test
 tests[29]='use IO;print "ok"'
@@ -239,9 +242,43 @@ result[30]='456123E0'
 # AUTOLOAD w/o goto xsub
 tests[31]='package MockShell;sub AUTOLOAD{my $p=$AUTOLOAD;$p=~s/.*:://;print(join(" ",$p,@_),";");} package main; MockShell::date();MockShell::who("am","i");MockShell::ls("-l");'
 result[31]='date;who am i;ls -l;'
-# CC types and arith
-tests[32]='my ($r_i,$i_i,$d_d)=(0,2,3.0); $r_i=$i_i*$i_i; $r_i*=$d_d; print $r_i;'
+# CC entertry/jmpenv_jump/leavetry
+tests[32]='eval{print "1"};eval{die 1};print "2\n";'
 result[32]='12'
+# C qr test was broken in 5.6 -- needs to load an actual file to test. See test 20.
+# used to error with Can't locate object method "save" via package "U??WVS?-" (perhaps you forgot to load "U??WVS?-"?) at /usr/lib/perl5/5.6.2/i686-linux/B/C.pm line 676.
+# fails with new constant only. still not repro
+tests[33]='package qr; 
+my $var = 1;
+my $qr_with_var = qr/^_?[^\W_0-9]\w*$var/;
+sub qr_called_in_sub { $name =~ $qr_with_var; }
+package main;
+print "ok";'
+result[33]='ok'
+# init of magic hashes. %ENV has e magic since a0714e2c perl.c  
+# (Steven Schubiger      2006-02-03 17:24:49 +0100 3967) i.e. 5.8.9 but not 5.8.8
+tests[34]='my $x=$ENV{TMPDIR};print "ok"'
+result[34]='ok'
+# method_named. fixed with 1.16
+tests[35]='package dummy;sub meth{print "ok"};package main;dummy->meth'
+result[35]='ok'
+# HV self-ref
+tests[36]='my ($rv, %hv); %hv = ( key => \$rv ); $rv = \%hv; print "ok";'
+result[36]='ok'
+
+
+# from here on we test CC specifics only
+
+# CC types and arith
+tests[101]='my ($r_i,$i_i,$d_d)=(0,2,3.0); $r_i=$i_i*$i_i; $r_i*=$d_d; print $r_i;'
+result[101]='12'
+# CC cond_expr, stub, scope
+tests[102]='if ($x eq "2"){}else{print "ok"}'
+result[102]='ok'
+# CC stringify, srefgen. TODO: use B; fails
+tests[103]='require B; my $x=1e1; my $s="$x"; print ref B::svref_2object(\$s)'
+result[103]='B::PV'
+
 
 init
 
@@ -275,7 +312,7 @@ do
   fi
   # -B dynamic or -B static
   if [ "$opt" = "B" ]; then 
-    CCMD="$PERL script/cc_harness -g3 -B${OPTARG}"
+    CCMD="$PERL script/cc_harness -d -g3 -B${OPTARG} -DALLOW_PERL_OPTIONS"
   fi
   if [ "$opt" = "O" ]; then OPTIM="$OPTARG"; fi
   if [ "$opt" = "a" ]; then # replace -Du, by -Do
@@ -302,6 +339,11 @@ else
   for b in $(seq -f"%02.0f" $ntests); do
     ctest $b
   done
+  if [ $BASE = "testcc.sh" ]; then 
+    for b in $(seq -f"%02.0f" 101 $(($ncctests+100))); do
+      ctest $b
+    done
+  fi
 fi
 
 # 562  c:  15,25,27

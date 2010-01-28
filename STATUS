@@ -16,13 +16,15 @@ Several B::C and B::CC bugs fixed. 5.10 + 5.11 compatibility added.
 
 Open Problems for B::C:
 5.6:
-    test 25, 27
+    test 15,27
 5.8:
     const xsubcv via AUTOLOAD (test 27)
 5.10:
     Optimization: destruction of static pvs for -O1 (-fcog temp. disabled)
 5.11:
     None. Completely same results as 5.10
+5.11.3: 
+    Test 32 with CC (catch evaltry die)
 
 See below at the detailed 5.6, 5.8, 5.10, 5.11 status
 
@@ -35,31 +37,31 @@ CORE (old)
 ----
 
 5.6.2:
-t/bytecode      3,6,8..10,12,15,16,18,26,28,31
+t/bytecode      3,6,8..10,12,15,16,18,28,31,35
 t/c             8,15,16,22,27,28,31
 t/c_o1          8,15,16,22,27,28,31
 t/c_o2          8,15,16,22,27,28,31
-t/cc            15,18,21,25,27,28,30,31
-t/cc_o1         15,18,21,25,27,28,30,31
-t/cc_o2         10,15,16,18,21,25,26,27,28,30,31
+t/cc            15,18,21,25,27,28,30..32
+t/cc_o1         15,18,21,25,27,28,30..32
+t/cc_o2         10,15,16,18,21,25,26,27,28,30..32
 
-5.8:  			                          	| non-threaded
+5.8:  			                          	   | non-threaded
 t/bytecode      ok
-t/c             11,14,15,20,23,27..29,31      		| 5,7-12,14-20,22-23,25,27,28,30,31
-t/c_o1          1,3-8,10..12,14,15,17..25,27..29,31	| 7-12,14-20,22-23,25,27,28,30,31
-t/c_o2          1,3-12,14,15,17..25,27..29,31     	| 7-12,14-20,22-23,25,27,28,30,31
-t/cc            7,11,14,15,18..21,23..25,28..31		
-t/cc_o1         7,11,14,15,18..21,23..31		
-t/cc_o2         7,10,11,14..16,18-21,23..31
+t/c             11,14,15,20,23,27..29,31,101,102 	   | 5,7-12,14-20,22-23,25,27,28,30,31
+t/c_o1          1,3-8,10..12,14,15,17..25,27..29,31,101,102| 7-12,14-20,22-23,25,27,28,30,31
+t/c_o2          1,3-12,14,15,17..25,27..29,31,101,102      | 7-12,14-20,22-23,25,27,28,30,31
+t/cc            7,11,14,15,18..21,23..25,28..32,101..103	
+t/cc_o1         7,11,14,15,18..21,23..32,101..103		
+t/cc_o2         7,10,11,14..16,18-21,23..32,101..103
 
 Recipe:
   p=perl5.6.2
   t/testc.sh -q -c
-  for t in $(seq -f"%02.0f" 31); do rm ccode 2>/dev/null; $p -MO=C,-occode.c ccode$t.pl 2>/dev/null && $p script/cc_harness ccode.c -o ccode >/dev/null; echo -n "$t: "; $p ccode$t.pl; echo -n " => "; ./ccode; echo; done
-  p=perl5.8.8
-  for t in $(seq -f"%02.0f" 31); do rm ccode 2>/dev/null; $p -MO=C,-occode.c ccode$t.pl 2>/dev/null && $p script/cc_harness -Bstatic ccode.c -o ccode >/dev/null; echo -n "$t: "; $p ccode$t.pl; echo -n " => "; ./ccode; echo; done
-  p=perl5.8.8-nt
-  for t in $(seq -f"%02.0f" 31); do rm ccode 2>/dev/null; $p -MO=C,-occode.c ccode$t.pl 2>/dev/null && $p script/cc_harness -Bdynamic ccode.c -o ccode >/dev/null; echo -n "$t: "; $p ccode$t.pl; echo -n " => "; ./ccode; echo; done
+  for t in $(seq -f"%02.0f" 32); do rm ccode 2>/dev/null; $p -MO=C,-occode.c ccode$t.pl 2>/dev/null && $p script/cc_harness ccode.c -o ccode >/dev/null; echo -n "$t: "; $p ccode$t.pl; echo -n " => "; ./ccode; echo; done
+  p=perl5.8.9
+  for t in $(seq -f"%02.0f" 35); do rm ccode 2>/dev/null; $p -MO=C,-occode.c ccode$t.pl 2>/dev/null && $p script/cc_harness -Bstatic ccode.c -o ccode >/dev/null; echo -n "$t: "; $p ccode$t.pl; echo -n " => "; ./ccode; echo; done
+  p=perl5.8.9d-nt
+  for t in $(seq -f"%02.0f" 35); do rm ccode 2>/dev/null; $p -MO=C,-occode.c ccode$t.pl 2>/dev/null && $p script/cc_harness -Bdynamic ccode.c -o ccode >/dev/null; echo -n "$t: "; $p ccode$t.pl; echo -n " => "; ./ccode; echo; done
 
 
 B::C (new)
@@ -75,8 +77,7 @@ t/c_o3          15,27				| 15
 t/c_o4		10,12,15,19,25,27
 t/cc            15,18,21,25,27,30
 t/cc_o1         15,18,21,25..27,30
-t/cc_o2         15,18,21,25..27,30
-t/cc_o3         10,15,16,18,21,25..27,30
+t/cc_o2         10,15,16,18,21,25..27,30
 
 5.8.0
 redhat perl http://www.nntp.perl.org/group/perl.cpan.testers/2009/12/msg6576363.html:
@@ -107,10 +108,9 @@ t/c_o1          ok				| 27
 t/c_o2          ok				| 27
 t/c_o3          ok				| 27
 t/c_o4          10,12,15,19,25  		| 10,12,19,25,27
-t/cc            18,21,25,27,30
-t/cc_o1         18,21,25..27,30
-t/cc_o2         18,21,25..27,30
-t/cc_o3         10,16,18,21,25..27,30
+t/cc            18,21,25,27,29,30
+t/cc_o1         18,21,25..27,29.30
+t/cc_o2         10,16,18,21,25..27,30
 
 5.10.1: 					| non-threaded
 t/bytecode 	ok				| 9,10,12 (or debug)
@@ -121,22 +121,117 @@ t/c_o3          ok				| ok
 t/c_o4          10,12,19,25
 t/cc 		18,21,25,29,30
 t/cc_o1         18,21,25,26,29,30		 
-t/cc_o2         18,21,25,26,29,30		 
-t/cc_o3         10,16,18,21,25,26,29,30		 
+t/cc_o2         10,16,18,21,25,26,29,30		 
 
 5.11.2: same as 5.10.1
+ 
+5.11.3: as 5.10.1, just c and cc fails with 32 (catch evaltry die)
+
+CPAN Modules
+------------
+See t/modules.t. We only try to compile use module, no testsuite.
+We only try B::C so far.
+
+nok Getopt::Long 
+nok Params::Validate 
+nok Path::Class 
+nok Perl::Critic 
+nok Test::Kwalitee
+nok IO 
+nok DBI 
+nok PPI 
+nok Sub::Exporter 
+nok Benchmark 
+ok  Moose
+nok CGI
+?   CGI::FormBuilder
+?   CGI::Session
+?   CGI::Application
+?   DBIx::Class
+?   Template::Toolkit
+?   HTML::Mason
+?   HTML::Template
+nok Text::Template
+?   Any::Template
+?   Template::Alloy
+ok  Pod::Escapes
+nok Pod::Simple
+nok Test::Pod
+ok  Devel::Symdump
+nok Pod::Coverage
+nok Test::Pod::Coverage
+nok Compress::Raw::Bzip2
+nok IO::Compress::Bzip2
+nok Compress::Bzip2
+ok  IO::String
+nok File::Temp
+nok Archive::Zip
+ok  Math::BigInt::FastCalc
+nok Term::ReadKey
+?   Term::ReadLine::Perl
+?   Term::ReadLine::Gnu
+ok  XML::NamespaceSupport
+nok XML::SAX
+nok XML::LibXML::Common
+nok XML::LibXML
+nok XML::Parser
+nok Proc::ProcessTable
+nok YAML
+nok Config::Tiny
+ok  File::Copy::Recursive
+nok IPC::Run3
+ok  Probe::Perl
+ok  Tee 
+nok IO::CaptureOutput 
+nok File::pushd 
+nok File::HomeDir
+nok Digest::SHA
+ok  Module::Signature
+nok URI 
+ok  HTML::Tagset 
+nok HTML::Parser 
+nok LWP
+nok CPAN
+nok Net::IP 
+nok Net::DNS 
+nok Test::Reporter 
+nok CPAN::Reporter
+ok  Text::Glob 
+nok Number::Compare 
+nok File::Find::Rule 
+nok Data::Compare 
+nok CPAN::Checksums
+nok File::Remove 
+ok  File::chmod
+ok  Params::Util 
+nok Test::Script 
+nok CPAN::Checksums 
+nok CPAN::Inject
+nok Net::Telnet
+nok Module::ScanDeps 
+nok PAR::Dist
+ok  Socket6 
+nok IO::Socket::INET6
+ok  B::Generate 
+ok  PadWalker 
+nok Alias
+
 
 5.10, 5.11 status
 -----------------
 TODO for B::C
-  AUTOLOAD goto xsub and SelfLoader esp on 5.8 (27). 
+  AUTOLOAD goto xsub and SelfLoader esp. on 5.8 (27). 
     use AutoLoader works okay. (test 27, 31)
   test 29 non-threaded 5.8 (require $fname)
+  5.11.3 test 32 catch evaltry die
   destruction: -O1 static PVs and HEKs (mult.) >=5.10
+  Fix and check t/modules and t/testcore.
+
+Fix CC cc_queue sort 18 ccpp
 
 DONE:
 fixed PP_ENTEREVAL (CC test 12) for 5.10 with 1.14.
-  Nullify ending retop for the string CALLRUNOPS.
+  Nullify ending retop for the string to CALLRUNOPS.
 
 fixed __DATA__ IO (test 15) on 5.10 and 5.11 with 1.12. 
   On 5.6 it is hard to fix (re-implement PerlIO::scalar).
@@ -331,4 +426,4 @@ cc B::CC,
 -D -DDEBUGGING perl, also used as d version suffix, eg 5.8.8d
 -nt not threaded perl.
 
-2010-01-01 rurban
+2010-01-27 rurban

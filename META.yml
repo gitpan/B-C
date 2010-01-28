@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               B-C
-version:            1.15
+version:            1.16
 abstract:           Perl compiler
 author:
     - Malcolm Beattie <mbeattie@sable.ox.ac.uk>, Reini Urban <rurban@cpan.org>
@@ -10,7 +10,8 @@ configure_requires:
     ExtUtils::MakeMaker:  0
 build_requires:
     ExtUtils::MakeMaker:  0
-requires:  {}
+requires:
+    Opcodes:  0
 no_index:
     directory:
         - t

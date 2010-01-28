@@ -51,11 +51,12 @@ if ($DEBUGGING) {
   }
 }
 my @todo = ();
-@todo = (3,6,8..10,12,15,16,18,26,28,31) if $] < 5.007; # CORE failures, ours not yet enabled
-@todo = (9,10,12)          if $] >= 5.010;
-@todo = ()  		    if $] >= 5.010 and $ITHREADS and !$DEBUGGING;
+@todo = (3,6,8..10,12,15,16,18,26,28,31,35) if $] < 5.007; # CORE failures, ours not yet enabled
+@todo = (9,10,12)   if $] >= 5.010;
+@todo = ()  	     if $] >= 5.010 and $ITHREADS and !$DEBUGGING;
+push @todo, (20,33) if $] >= 5.011003; # XXX pm_setre
 
-my @skip = (27,29) if $] >= 5.010;
+my @skip = (20,27,29) if $] >= 5.010;
 
 my %todo = map { $_ => 1 } @todo;
 my %skip = map { $_ => 1 } @skip;
@@ -63,7 +64,7 @@ my $Mblib = $] >= 5.008 ? "-Mblib" : ""; # test also the CORE B in older perls?
 my $backend = "Bytecode";
 unless ($Mblib) { # check for -Mblib from the testsuite
   if (grep { m{blib(/|\\)arch$} } @INC) {
-    $Mblib = "-Iblib/arch -Iblib/lib";  # forced -Mblib via cmdline
+    $Mblib = "-Iblib/arch -Iblib/lib";  # force -Mblib via cmdline, but silent!
   }
 }
 else {

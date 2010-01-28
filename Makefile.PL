@@ -10,8 +10,9 @@ WriteMakefile(
     VERSION_FROM => "lib/B/C.pm",
     PL_FILES   => { 'script/perlcc.PL'    => 'script/perlcc' },
     EXE_FILES  => [qw(script/perlcc script/cc_harness script/assemble script/disassemble)],
-    #PREREQ_PM => {'B::Concise' => '0.66',
-    #	           'B'          => '1.0901'},
+    PREREQ_PM  => {'Opcodes' => '0',
+    #	          'B'          => '1.0901'
+                  },
     'AUTHOR'   => 'Malcolm Beattie <mbeattie@sable.ox.ac.uk>, Reini Urban <rurban@cpan.org>',
     'ABSTRACT' => 'Perl compiler',
     # ($ExtUtils::MakeMaker::VERSION gt '6.31' ?
@@ -21,6 +22,7 @@ WriteMakefile(
     SIGN  => 1,
     clean => { FILES =>
                "bytecode[0-9]* ccode[0-9]* cccode[0-9]* ".
+               "lib/B/Asmdata.pm".
  	       "*.core *.stackdump a.out a.exe *.cee *.c *.asm *.dbg *.plc *.obj".
                "*.concise *~ dll.base dll.exp"},
 );
@@ -52,7 +54,9 @@ sub post_constants {
 sub ccflags {
   my $ccflags = shift->SUPER::ccflags(@_);
   return $ccflags unless -d ".svn";
-  $ccflags .= " -ansi -Wall -Wextra -pedantic" if $Config{cc} =~ /gcc/;
+  # Recommended by http://www.network-theory.co.uk/docs/gccintro/gccintro_32.html
+  # -ansi -pedantic -Wall -W -Wconversion -Wshadow -Wcast-qual -Wwrite-strings (-W => -WExtra)
+  $ccflags .= " -ansi -pedantic -Wall -Wextra -Wconversion -Wshadow -Wcast-qual -Wwrite-strings" if $Config{cc} =~ /gcc/;
 }
 
 sub depend {
@@ -64,13 +68,13 @@ sub depend {
     my $result = "
 C.c : C.xs Makefile
 
-$asmdata : bytecode.pl @headers Makefile
+$asmdata : Makefile bytecode.pl @headers
 	\$(PERL) bytecode.pl
 
-$byterun_c : bytecode.pl @headers Makefile
+$byterun_c : Makefile bytecode.pl @headers
 	\$(PERL) bytecode.pl
 
-$byterun_h : bytecode.pl @headers Makefile
+$byterun_h : Makefile bytecode.pl @headers
 	\$(PERL) bytecode.pl
 ";
     $result .= "\ntest :: subdirs-test\n\n" if $] > 5.009;
