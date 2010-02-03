@@ -8,7 +8,7 @@
 #
 package B::CC;
 
-our $VERSION = '1.05';
+our $VERSION = '1.06';
 
 use Config;
 use strict;
@@ -48,7 +48,6 @@ my @pad;           # Lexicals in current pad as Stackobj-derived objects
 my @padlist;       # Copy of current padlist so PMOP repl code can find it
 my @cxstack;       # Shadows the (compile-time) cxstack for next,last,redo
 		    # This covers only a small part of the perl cxstack
-my $jmpbuf_ix = 0;  # Next free index for dynamically allocated jmpbufs
 my %constobj;      # OP_CONST constants as Stackobj-derived objects
                     # keyed by $$sv.
 my $need_freetmps = 0;	# We may postpone FREETMPS to the end of each basic
@@ -67,14 +66,14 @@ my $package_pv;      # sv->pv of previous op for method_named
 
 my %lexstate;           #state of padsvs at the start of a bblock
 my $verbose;
-my $entertry_defined;
+my ($entertry_defined, $vivify_ref_defined, $PerlProc_jmp_defined);
 my ( $module_name, %debug );
 
 # Optimisation options. On the command line, use hyphens instead of
 # underscores for compatibility with gcc-style options. We use
 # underscores here because they are OK in (strict) barewords.
 my ( $freetmps_each_bblock, $freetmps_each_loop, $inline_ops, $omit_taint );
-$inline_ops = 1; # now always on
+$inline_ops = 1 unless $^O eq 'MSWin32'; # Win32 cannot link to unexported pp_op()
 my %optimise = (
   freetmps_each_bblock => \$freetmps_each_bblock, #-O1
   freetmps_each_loop   => \$freetmps_each_loop,	  #-O2
@@ -174,6 +173,16 @@ sub save_runtime {
 sub output_runtime {
   my $ppdata;
   print qq(#include "cc_runtime.h"\n);
+  # PerlProc_setjmp PerlProc_longjmp for Windows
+  # CC coverage: 12, 32
+  print << '__EOF';
+#ifndef PerlProc_setjmp
+# define PerlProc_setjmp(b, n) Sigsetjmp((b), (n))
+# define PerlProc_longjmp(b, n) Siglongjmp((b), (n))
+#endif
+
+__EOF
+
 
   # Perls >=5.8.9 have a broken PP_ENTERTRY. See PERL_FLEXIBLE_EXCEPTIONS in cop.h
   # Fixed in CORE with 5.11.4
@@ -237,6 +246,53 @@ sub output_runtime {
 ';
   }
 
+  # Perl_vivify_ref not exported on MSWin32
+  # coverage: 18
+  if ($PERL510 and $^O eq 'MSWin32') {
+    # CC coverage: 18, 29
+    print << '__EOV' if $vivify_ref_defined;
+
+/* Code to take a scalar and ready it to hold a reference */
+#  define prepare_SV_for_RV(sv)						\
+    STMT_START {							\
+		    if (SvTYPE(sv) < SVt_RV)				\
+			sv_upgrade(sv, SVt_RV);				\
+		    else if (SvPVX_const(sv)) {				\
+			SvPV_free(sv);					\
+			SvLEN_set(sv, 0);				\
+                        SvCUR_set(sv, 0);				\
+		    }							\
+		 } STMT_END
+
+void
+Perl_vivify_ref(pTHX_ SV *sv, U32 to_what)
+{
+    PERL_ARGS_ASSERT_VIVIFY_REF;
+
+    SvGETMAGIC(sv);
+    if (!SvOK(sv)) {
+	if (SvREADONLY(sv))
+	    Perl_croak(aTHX_ "%s", PL_no_modify);
+	prepare_SV_for_RV(sv);
+	switch (to_what) {
+	case OPpDEREF_SV:
+	    SvRV_set(sv, newSV(0));
+	    break;
+	case OPpDEREF_AV:
+	    SvRV_set(sv, MUTABLE_SV(newAV()));
+	    break;
+	case OPpDEREF_HV:
+	    SvRV_set(sv, MUTABLE_SV(newHV()));
+	    break;
+	}
+	SvROK_on(sv);
+	SvSETMAGIC(sv);
+    }
+}
+
+__EOV
+  }
+
   foreach $ppdata (@pp_list) {
     my ( $name, $runtime, $declare ) = @$ppdata;
     print "\nstatic\nCCPP($name)\n{\n";
@@ -268,7 +324,7 @@ sub init_pp {
   map { declare( "SV", "*$_" ) } qw(sv src dst left right);
   declare( "MAGIC", "*mg" );
   $decl->add( "#undef cxinc", "#define cxinc() Perl_cxinc(aTHX)")
-    if !$PERL511 and $inline_ops;
+    if $] < 5.011001 and $inline_ops;
   declare( "PERL_CONTEXT", "*cx" );
   declare( "I32", "gimme");
   $decl->add("static OP * $ppname (pTHX);");
@@ -765,6 +821,7 @@ sub pp_padsv {
       # coverage: 18
       runtime(sprintf( "Perl_vivify_ref(aTHX_ PL_curpad[%d], %d);",
                        $ix, $private & OPpDEREF ));
+      $vivify_ref_defined++;
       $pad[$ix]->invalidate;
     }
   }
@@ -1590,7 +1647,7 @@ sub pp_enter {
     } else {
       runtime "gimme = OP_GIMME(PL_op, -1);";
     }
-    runtime($PERL511 ? 'ENTER_with_name("block");' : 'ENTER;',
+    runtime($] >= 5.011001 ? 'ENTER_with_name("block");' : 'ENTER;',
       "SAVETMPS;",
       "PUSHBLOCK(cx, CXt_BLOCK, SP);");
     return $op->next;
@@ -1679,7 +1736,6 @@ sub pp_entertry {
   write_back_lexicals( REGISTER | TEMPORARY );
   write_back_stack();
   my $sym = doop($op);
-  my $jmpbuf;
   $entertry_defined = 1;
   runtime(sprintf( "PP_ENTERTRY(%s);",
                    label( $op->other->next ) ) );
@@ -2351,7 +2407,7 @@ OPTION:
   # rgs didn't want opcodes to be added to Opcode. So I added it to a
   # seperate Opcodes.
   eval { require Opcodes; };
-  if (defined $Opcodes::VERSION) {
+  if (!$@ and $Opcodes::VERSION) {
     my $MAXO = Opcodes::opcodes();
     for (0..$MAXO-1) {
       no strict 'refs';

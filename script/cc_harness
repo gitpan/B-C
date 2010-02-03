@@ -21,7 +21,7 @@ if (grep(/^-[cES]$/, @ARGV)) { # compile-only with -c -E or -S
 } else { # try dynamic lib if no static lib exists
     use ExtUtils::Embed;
     @ARGV = grep{ !/^-Bdynamic$/o } @ARGV;
-    $linkargs = ldopts;
+    $linkargs = ldopts('-std');
 }
 
 my $ccflags = $Config{ccflags};

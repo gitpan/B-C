@@ -60,7 +60,6 @@ script/cc_harness
 script/disassemble
 script/perlcc.PL
 script/pl2exe.pl			# "compiles" script to Windows exe
-SIGNATURE
 STATUS
 status_upd
 t/asmdata.t
@@ -79,6 +78,8 @@ t/cc.t
 t/cc_o1.t
 t/cc_o2.t
 t/o.t
+t/modules.t
+t/mymodules
 t/stash.t
 t/TESTS
 t/testcore.t
@@ -86,6 +87,8 @@ t/test.pl
 t/testplc.sh
 t/testc.sh
 t/testcc.sh
+t/top100
 TESTS
 Todo
 yapc_bratislava08.pod
+SIGNATURE                                Public-key signature (added by MakeMaker)
