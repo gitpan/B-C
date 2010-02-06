@@ -90,5 +90,6 @@ t/testcc.sh
 t/top100
 TESTS
 Todo
+typemap
 yapc_bratislava08.pod
 SIGNATURE                                Public-key signature (added by MakeMaker)

@@ -5,6 +5,8 @@ use 5.006;
 
 my $core = grep { $_ eq 'PERL_CORE=1' } @ARGV;
 
+system("$^X bytecode.pl");
+
 WriteMakefile(
     NAME	 => "B::C",
     VERSION_FROM => "lib/B/C.pm",
@@ -22,9 +24,10 @@ WriteMakefile(
     SIGN  => 1,
     clean => { FILES =>
                "bytecode[0-9]* ccode[0-9]* cccode[0-9]* ".
-               "lib/B/Asmdata.pm".
- 	       "*.core *.stackdump a.out a.exe *.cee *.c *.asm *.dbg *.plc *.obj".
-               "*.concise *~ dll.base dll.exp mod.pl"},
+               "lib/B/Asmdata.pm script/perlcc ".
+ 	       "*.core *.stackdump a.out a.exe *.cee *.c *.asm *.dbg *.plc *.obj ".
+               "*.concise *~ dll.base dll.exp mod.pl"
+             },
 );
 
 sub headerpath {

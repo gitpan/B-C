@@ -3,6 +3,19 @@
 	The Perl compiler was in CORE from alpha4 until Perl 5.9.4 and worked 
 	quite fine with Perl 5.6 and 5.8
 
+1.18	2010-02-06 rurban
+	evaltry (test 12) still broken on most systems.
+
+	* C.pm, C.xs: fixed r-magic for 5.6 (ExtUtils::Install, 
+	  File::Temp, Template::Stash). need tests for run-time checks (33).
+	  5.6 misses MG->pregcomp
+	* t/modules.t: check for a.out (test from toddr)
+	* Makefile.PL: create lib/B/Asmdata.pm beforehand (toddr)
+	* ByteLoader: fixed duplicate + missing bl_header for bsd and Darwin 
+	  (test from toddr)
+	* test 37 added - AV self-refs, analog to HVs (never failed, just to be sure)
+	  Removed -qq from 5.6 tests.
+
 1.17	2010-02-03 rurban
 	Fixed now most module failures, non-threaded at least: bootstrap was in 
 	the way. strawberry perl fixes. Fixed test 29, broke evaltry test 12
@@ -13,7 +26,7 @@
 	  Fail: Attribute::Handlers, B::Hooks::EndOfScope, YAML, MooseX::Types
 	  4 for 5.8.9-nt from the top100, and 3 for 5.11.4-nt: Attribute::Handlers, 
 	  File::Temp, ExtUtils::Install.
-	Fixed AV self-references causing endless loops, analog to HVs.
+	Fixed AV self-references causing endless loops, analog to HVs (test 27)
 	Fixed Getopt::Long crash with AV D magic (regdata),
 	  save_magic returns now the magic types as string.
 	Fixed unescaped savere (test ExtUtils::Install).
