@@ -1,11 +1,32 @@
-# http://module-build.sourceforge.net/META-spec.html
-#XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
-name:         B-C
-version:      1.18
-version_from: lib/B/C.pm
-installdirs:  site
+--- #YAML:1.0
+name:               B-C
+version:            1.19
+abstract:           Perl compiler
+author:
+    - Malcolm Beattie <mbeattie@sable.ox.ac.uk>, Reini Urban <perl-compiler@googlegroups.com>
+license:            unknown
+distribution_type:  module
+configure_requires:
+    ExtUtils::MakeMaker:  0
+build_requires:
+    ExtUtils::MakeMaker:  0
 requires:
-    Opcodes:                       0
-
-distribution_type: module
-generated_by: ExtUtils::MakeMaker version 6.30
+    IPC::Run:  0
+    Opcodes:   0
+resources:
+    bugtracker:   http://code.google.com/p/perl-compiler/issues
+    homepage:     http://perl-compiler.googlecode.com
+    license:      http://dev.perl.org/licenses/
+    MailingList:  http://groups.google.com/group/perl-compiler
+    repository:   http://perl-compiler.googlecode.com/svn/
+no_index:
+    directory:
+        - t
+        - inc
+generated_by:       ExtUtils::MakeMaker version 6.56
+meta-spec:
+    url:      http://module-build.sourceforge.net/META-spec-v1.4.html
+    version:  1.4
+recommends:
+    B::Debug:  1.12
+    IPC::Run:  0

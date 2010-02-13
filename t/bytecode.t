@@ -50,13 +50,12 @@ if ($DEBUGGING) {
     for (0..@insn_name) { $insncov{$_} = 0; }
   }
 }
-my @todo = ();
-@todo = (3,6,8..10,12,15,16,18,26,28,31,35) if $] < 5.007; # CORE failures, ours not yet enabled
-@todo = (9,10,12)   if $] >= 5.010;
-@todo = ()  	     if $] >= 5.010 and $ITHREADS and !$DEBUGGING;
-push @todo, (20,32) if $] >= 5.011003; # XXX pm_setre
-
-my @skip = (20,27,29) if $] >= 5.010;
+my @todo = (33,39);
+@todo = (3,6,8..10,12,15,16,18,26,28,31,33,35,38)
+  if $] < 5.007; # CORE failures, ours not yet enabled
+pop @todo if $] > 5.011003; # 39 passes on 5.11.3
+push @todo, (32) if $] > 5.011003; # entertry still fails with 5.11.4
+my @skip = (); #(20,27,29) if $] >= 5.010;
 
 my %todo = map { $_ => 1 } @todo;
 my %skip = map { $_ => 1 } @skip;
@@ -87,7 +86,8 @@ for (@tests) {
   $got = run_perl(switches => [ "$Mblib -MO=$backend,-o${test}c" ],
 		  verbose  => $verbose, # for DEBUGGING
 		  nolib    => $ENV{PERL_CORE} ? 0 : 1, # include ../lib only in CORE
-		  stderr   => 1, # to capture the "bytecode.pl syntax ok"	
+		  stderr   => 1, # to capture the "bytecode.pl syntax ok"
+		  timeout  => 10,
 		  progfile => $test);
   unless ($?) {
     # test coverage if -Dv is allowed
@@ -95,6 +95,7 @@ for (@tests) {
       my $cov = run_perl(progfile => "${test}c", # run the .plc
 			 nolib    => $ENV{PERL_CORE} ? 0 : 1,
 			 stderr   => 1,
+			 timeout  => 20,
 			 switches => [ "$Mblib -MByteLoader -Dv" ]);
       for (map { /\(insn (\d+)\)/ ? $1 : undef }
 	     grep /\(insn (\d+)\)/, split(/\n/, $cov)) {
@@ -105,6 +106,7 @@ for (@tests) {
                     verbose  => $ENV{TEST_VERBOSE}, # for debugging
 		    nolib    => $ENV{PERL_CORE} ? 0 : 1,
 		    stderr   => 1,
+		    timeout  => 5,
 		    switches => [ "$Mblib -MByteLoader" ]);
     unless ($?) {
       if ($cnt == 25 and $expect eq '0 1 2 3 4321' and $] < 5.008) {

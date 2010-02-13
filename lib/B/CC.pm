@@ -8,7 +8,7 @@
 #
 package B::CC;
 
-our $VERSION = '1.06';
+our $VERSION = '1.07';
 
 use Config;
 use strict;
@@ -72,13 +72,14 @@ my ( $module_name, %debug );
 # Optimisation options. On the command line, use hyphens instead of
 # underscores for compatibility with gcc-style options. We use
 # underscores here because they are OK in (strict) barewords.
-my ( $freetmps_each_bblock, $freetmps_each_loop, $inline_ops, $omit_taint );
+my ( $freetmps_each_bblock, $freetmps_each_loop, $inline_ops, $omit_taint, $slow_signals );
 $inline_ops = 1 unless $^O eq 'MSWin32'; # Win32 cannot link to unexported pp_op()
 my %optimise = (
   freetmps_each_bblock => \$freetmps_each_bblock, #-O1
   freetmps_each_loop   => \$freetmps_each_loop,	  #-O2
   inline_ops 	       => \$inline_ops,	  	  #always
   omit_taint           => \$omit_taint,
+  slow_signals         => \$slow_signals,
 );
 
 # perl patchlevel to generate code for (defaults to current patchlevel)
@@ -172,17 +173,8 @@ sub save_runtime {
 
 sub output_runtime {
   my $ppdata;
-  print qq(#include "cc_runtime.h"\n);
-  # PerlProc_setjmp PerlProc_longjmp for Windows
+  print qq(\n#include "cc_runtime.h"\n);
   # CC coverage: 12, 32
-  print << '__EOF';
-#ifndef PerlProc_setjmp
-# define PerlProc_setjmp(b, n) Sigsetjmp((b), (n))
-# define PerlProc_longjmp(b, n) Siglongjmp((b), (n))
-#endif
-
-__EOF
-
 
   # Perls >=5.8.9 have a broken PP_ENTERTRY. See PERL_FLEXIBLE_EXCEPTIONS in cop.h
   # Fixed in CORE with 5.11.4
@@ -856,7 +848,7 @@ sub pp_const {
   return $op->next;
 }
 
-# coverage: 1-32
+# coverage: 1-39, fails in 33
 sub pp_nextstate {
   my $op = shift;
   $curcop->load($op);
@@ -864,7 +856,13 @@ sub pp_nextstate {
   debug( sprintf( "%s:%d\n", $op->file, $op->line ) ) if $debug{lineno};
   debug( sprintf( "CopLABEL %s\n", $op->label ) ) if $op->label and $debug{cxstack};
   runtime("TAINT_NOT;\t/* nextstate */") unless $omit_taint;
+  #my $cxix  = $#cxstack;
+  # XXX What symptom I'm fighting here? test 33
+  #if ( $cxix >= 0 ) { # XXX
   runtime("sp = PL_stack_base + cxstack[cxstack_ix].blk_oldsp;");
+  #} else {
+  #  runtime("sp = PL_stack_base;");
+  #}
   if ( $freetmps_each_bblock || $freetmps_each_loop ) {
     $need_freetmps = 1;
   }
@@ -1133,10 +1131,10 @@ sub pp_gvsv {
 sub pp_aelemfast {
   my $op = shift;
   my $gvsym;
-  if ($ITHREADS and $op->can('padix')) {
-    $gvsym = $pad[ $op->padix ]->as_sv;
+  if ($ITHREADS) { #padop XXX if it's only a OP, no PADOP? t/CORE/op/ref.t test 36
+    $gvsym = $op->can('padix') ? $pad[ $op->padix ]->as_sv : "''";
   }
-  else {
+  else { #svop
     $gvsym = $op->gv->save;
   }
   my $ix   = $op->private;
@@ -1628,18 +1626,20 @@ sub pp_goto {
   return $op->next;
 }
 
-# coverage: 1-32
+# coverage: 1-39, c_argv.t 2
 sub pp_enter {
-  if ($inline_ops) {
+  # XXX fails with simple c_argv.t 2. no cxix. Disabled for now
+  if (0 and $inline_ops) {
     my $op = shift;
     warn "inlining enter\n" if $debug{op};
     $curcop->write_back if $curcop;
     if (!($op->flags & OPf_WANT)) {
-      if ( $#cxstack >= 0) {
+      my $cxix = $#cxstack;
+      if ( $cxix >= 0 ) {
         if ( $op->flags & OPf_SPECIAL ) {
           runtime "gimme = block_gimme();";
         } else {
-          runtime "cxstack[cxstack_ix].blk_gimme;";
+          runtime "gimme = cxstack[cxstack_ix].blk_gimme;";
         }
       } else {
         runtime "gimme = G_SCALAR;";
@@ -1647,7 +1647,8 @@ sub pp_enter {
     } else {
       runtime "gimme = OP_GIMME(PL_op, -1);";
     }
-    runtime($] >= 5.011001 ? 'ENTER_with_name("block");' : 'ENTER;',
+    runtime($] >= 5.011001 and $] < 5.011004
+	    ? 'ENTER_with_name("block");' : 'ENTER;',
       "SAVETMPS;",
       "PUSHBLOCK(cx, CXt_BLOCK, SP);");
     return $op->next;
@@ -1925,9 +1926,11 @@ sub enterloop {
   $nextop->save;
   $lastop->save;
   $redoop->save;
-  if ($inline_ops and $op->name eq 'enterloop') {
+  if (0 and $inline_ops and $op->name eq 'enterloop') {
     warn "inlining enterloop\n" if $debug{op};
-    runtime "gimme = GIMME_V;";
+    # XXX = GIMME_V fails on freebsd7 5.8.8 (28)
+    # = block_gimme() fails on the rest, but passes on freebsd7
+    runtime "gimme = GIMME_V;"; # XXX
     if ($PERL511) {
       runtime('ENTER_with_name("loop1");',
               'SAVETMPS;',
@@ -2139,6 +2142,7 @@ sub compile_bblock {
   $know_op = 0;
   do {
     $op = compile_op($op);
+    runtime("PERL_ASYNC_CHECK();") if $slow_signals;
   } while ( defined($op) && $$op && !exists( $leaders->{$$op} ) );
   write_back_stack();    # boo hoo: big loss
   reload_lexicals();
@@ -2369,6 +2373,7 @@ OPTION:
     elsif ( $opt eq "D" ) {
       $arg ||= shift @options;
       $verbose++;
+      $arg = 'oOscprSqlt' if $arg eq 'full';
       foreach $arg ( split( //, $arg ) ) {
         if ( $arg eq "o" ) {
           B->debug(1);
@@ -2615,6 +2620,18 @@ magic
 =item B<-fomit-taint>
 
 Omits generating code for handling perl's tainting mechanism.
+
+=item B<-fslow-signals>
+
+Add PERL_ASYNC_CHECK after every op as in the Perl runloop or B::C.
+
+perl "Safe signals" check the state of incoming signals after every op.
+See L<http://perldoc.perl.org/perlipc.html#Deferred-Signals-(Safe-Signals)>
+We trade safety for more speed and delay the execution of non-IO signals
+(IO signals are already handled in PerlIO) from after every single Perl op
+to after every Basic Block.
+
+Only with -fslow-signals we get the old slow and safe behaviour.
 
 =item B<-On>
 

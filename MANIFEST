@@ -1,5 +1,4 @@
 Artistic
-lib/B/Asmdata.pm
 lib/B/Assembler.pm
 lib/B/Bblock.pm
 lib/B/Bytecode.pm
@@ -49,9 +48,11 @@ perloptree.pod
 ramblings/cc.notes
 ramblings/curcop.runtime
 ramblings/flip-flop
+ramblings/frozenperl_2010.pod
 ramblings/magic
 ramblings/reg.alloc
 ramblings/runtime.porting
+ramblings/yapc_bratislava08.pod
 README
 README.alpha
 regen_lib.pl
@@ -77,9 +78,11 @@ t/c_o4.t
 t/cc.t
 t/cc_o1.t
 t/cc_o2.t
-t/o.t
+t/modules.pm
 t/modules.t
 t/mymodules
+t/o.t
+t/qr_loaded_module.pm
 t/stash.t
 t/TESTS
 t/testcore.t
@@ -87,9 +90,9 @@ t/test.pl
 t/testplc.sh
 t/testc.sh
 t/testcc.sh
+t/testm.sh
 t/top100
 TESTS
 Todo
 typemap
-yapc_bratislava08.pod
 SIGNATURE                                Public-key signature (added by MakeMaker)

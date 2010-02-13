@@ -3,6 +3,42 @@
 	The Perl compiler was in CORE from alpha4 until Perl 5.9.4 and worked 
 	quite fine with Perl 5.6 and 5.8
 
+1.19	2010-02-13 rurban
+	Almost fixed evaltry (12) with proper cop_seq setup, just solaris and debian
+	fail sometimes. 
+	strawberry 5.10.1 tested ok.
+
+	* C.pm: fixed evaltry (test 12) mostly, NVX was shared with 2 xpad_cop_seq ints
+	  which accidently just worked before 1.17 with %s, but not after changing 
+	  to the %g representation.
+	Ignore unused random (overlong) xpviv IV, causing
+	  "warning: this decimal constant is unsigned only in ISO C90"
+	Defer rv => cv to run-time < 5.10. Fixes ExtUtils::Install
+	Defer xpvmg->pv init to run-time < 5.10. Fixes MooseX::Types
+	Check for NV inf. Fixes compilation of DateTime
+	Defined PERL_CORE: Fxied Windows problems with setjmp undef'ed in XSUB.h
+	Added Win32 workaround for missing PL_do_undump
+	Stripped perl_ prefix from perl_get_cv, perl_call_pv, perl_call_method
+	* CC.pm (1.07): added -fslow-signals.
+	Disabled inlined pp_enter: Fails on empty cxstack. 
+	Backed out inlining of enterloop: GIMME_V fails on freebsd7
+	Remove strawberry PerlProc_setjmp definition, #define PERL_CORE fixed that
+	* Bytecode.pm (1.06): same NVX => xpad_cop_seq fix as in C.pm, added 2 new 
+	  bytecodes (cop_seq_low, cop_seq_high), fixed tests 9,10,12. Passes 
+	  all tests > 5.6 now.
+	* bytecode.pl: added cop_seq_low (155), cop_seq_high (156) instead of xnv. 
+	  No conversion code for loading older bytecode needed, but fragile (double => 2 int)
+	* t/modules.t: refactored by toddr. 4*tests per module:
+	  -s a, exitcode 0, ok, no warnings on stderr
+	* t/TESTS: added 38, failing on CC (Nick Koston).
+	added 39, failing everywhere.
+	* t/test.pl: refactor: Try to timeout on all tests (compiler and exec) if
+	  IPC::Run is installed
+	* MANIFEST, *.pod: Moved conference pods to ramblings,
+	removed lib/B/Asmdata.pm again, added t/qr_loaded_module.pm
+	* t/testm.sh, t/modules.pm: added, -t not working yet though
+	* t/b.t: $[ => $]
+
 1.18	2010-02-06 rurban
 	evaltry (test 12) still broken on most systems.
 
@@ -13,8 +49,9 @@
 	* Makefile.PL: create lib/B/Asmdata.pm beforehand (toddr)
 	* ByteLoader: fixed duplicate + missing bl_header for bsd and Darwin 
 	  (test from toddr)
-	* test 37 added - AV self-refs, analog to HVs (never failed, just to be sure)
-	  Removed -qq from 5.6 tests.
+	* test 37 added - AV self-refs, analog to HVs (never failed, just to
+	  be sure).
+	Removed -qq from 5.6 tests.
 
 1.17	2010-02-03 rurban
 	Fixed now most module failures, non-threaded at least: bootstrap was in 
@@ -239,7 +276,7 @@
 	
 1.04_33	2009-12-17 rurban
 	* t/cc*.t: skip some memory eating failing tests.
-	* MANIFEST: dummy lib/B/Asmdata.pm added to fix cpan smokes.
+	* MANIFEST: dummy lib/B/Asmdata.pm added to fix cpan smokes on BSD.
 	Thanks to Slaven Rezic.
 	* C.pm: fix tests 14,16,23 on >=5.10, missing AV magic for
 	  CV main::a, protect PVMG from SvPAD_OUR.

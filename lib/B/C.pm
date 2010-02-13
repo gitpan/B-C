@@ -9,7 +9,7 @@
 
 package B::C;
 
-our $VERSION = '1.18';
+our $VERSION = '1.19';
 
 package B::C::Section;
 
@@ -157,9 +157,10 @@ package B::C;
 use Exporter ();
 our %REGEXP;
 
-{    # block necessary for caller to work
+{ # block necessary for caller to work
   my $caller = caller;
-  if ( $caller eq 'O' ) {
+  # r-magic fixed with 1.18. C.so|dll not needed anymore
+  if ( $caller eq 'O' and $] < 5.007 ) {
     require XSLoader;
     XSLoader::load('B::C');
   }
@@ -176,12 +177,16 @@ use B
   qw(minus_c sv_undef walkoptree walkoptree_slow walksymtable main_root main_start peekop
   class cchar svref_2object compile_stats comppadlist hash
   threadsv_names main_cv init_av end_av opnumber amagic_generation cstring
-  HEf_SVKEY SVf_POK SVf_ROK SVf_IVisUV);
+  HEf_SVKEY SVf_POK SVf_ROK SVf_IOK SVf_NOK SVf_IVisUV);
 BEGIN {
   if ($] >=  5.008) {
     @B::NV::ISA = 'B::IV';		  # add IVX to nv. This fixes test 23 for Perl 5.8
-    B->import(qw(regex_padav CVf_CONST)); # both unsupported for 5.6
+    B->import(qw(regex_padav SVp_NOK SVp_IOK CVf_CONST)); # both unsupported for 5.6
   } else {
+    eval q[
+      sub SVp_NOK() {0}; # unused
+      sub SVp_IOK() {0};
+     ];
     @B::PVMG::ISA = qw(B::PVNV B::RV);
   }
 }
@@ -997,6 +1002,7 @@ sub B::PMOP::save {
     unless $B::C::optimize_ppaddr;
   my $re = $op->precomp; #out of memory: Module::Pluggable, Carp::Clan - threaded
   if ( defined($re) ) {
+    $REGEXP{$$op} = $op;
     if ($PERL510) {
       # TODO minor optim: fix savere( $re ) to avoid newSVpvn;
       my $resym = cstring($re);
@@ -1108,15 +1114,15 @@ sub B::NV::save {
   my ($sv) = @_;
   my $sym = objsym($sv);
   return $sym if defined $sym;
-  my $val = $sv->NVX;
+  my $val = $sv->NV;
   my $sval = sprintf("%g", $val);
-  $val = '0' if $sval =~ /NAN$/i; # windows msvcrt
+  $val = '0' if $sval =~ /(NAN|inf)$/i; # windows msvcrt
   $val .= '.00' if $val =~ /^-?\d+$/;
   if ($PERL510) { # not fixed by NV isa IV >= 5.8
-    $xpvnvsect->add( sprintf( "{%g}, 0, 0, {0}", $val ) );
+    $xpvnvsect->add( sprintf( "{%s}, 0, 0, {0}", $val ) );
   }
   else {
-    $xpvnvsect->add( sprintf( "0, 0, 0, %d, %g", $sv->IVX, $val ) );
+    $xpvnvsect->add( sprintf( "0, 0, 0, %d, %s", $sv->IVX, $val ) );
   }
   $svsect->add(
     sprintf(
@@ -1177,7 +1183,7 @@ sub B::PVLV::save {
   } else {
     $xpvlvsect->comment('PVX, CUR, LEN, IVX, NVX, TARGOFF, TARGLEN, TYPE');
     $xpvlvsect->add(
-       sprintf("%s, %u, %u, %d, %g, 0, 0, %u, %u, 0, %s",
+       sprintf("%s, %u, %u, %d, %s, 0, 0, %u, %u, 0, %s",
 	       $pvsym,   $len,         $pvmax,       $sv->IVX,
 	       $sv->NVX, $sv->TARGOFF, $sv->TARGLEN, cchar( $sv->TYPE ) ));
     $svsect->add(sprintf("&xpvlv_list[%d], %lu, 0x%x",
@@ -1203,9 +1209,12 @@ sub B::PVIV::save {
   my $sym = objsym($sv);
   return $sym if defined $sym;
   my ( $savesym, $pvmax, $len, $pv ) = save_pv_or_rv($sv);
-  $xpvivsect->comment('$savesym, $len, $pvmax, $sv->IVX');
-  $xpvivsect->add(
-    sprintf( "%s, %u, %u, %d", $savesym, $len, $pvmax, $sv->IVX ) );
+  $xpvivsect->comment('pv, len, pvmax, IVX');
+  my $iv = $sv->IVX;
+  $iv = 0 if (!$PERL510 and $sv->FLAGS & (SVf_IOK|SVp_IOK));
+  $xpvivsect->add( sprintf( "%s, %u, %u, %ld",
+                            $PERL510?'{0}':$savesym,
+                            $len, $pvmax, $iv ) ); # IVTYPE long
   $svsect->add(
     sprintf("&xpviv_list[%d], %u, 0x%x %s",
             $xpvivsect->index, $sv->REFCNT, $sv->FLAGS, $PERL510 ? ', {0}' : '' ) );
@@ -1228,17 +1237,33 @@ sub B::PVNV::save {
   return $sym if defined $sym;
   my ( $savesym, $pvmax, $len, $pv ) = save_pv_or_rv($sv);
   my $val = $sv->NVX;
-  $val .= '.00' if $val =~ /^-?\d+$/;
-  my $sval = sprintf("%g", $val);
-  $val = '0' if $sval =~ /NAN$/i; # windows msvcrt
+  if ($sv->FLAGS & (SVf_NOK|SVp_NOK)) {
+    # it could be a double, or it could be 2 ints - union xpad_cop_seq
+    my $sval = sprintf("%g", $val);
+    $val = '0' if $sval =~ /(NAN|inf)$/i; # windows msvcrt (DateTime)
+    $val .= '.00' if $val =~ /^-?\d+$/;
+  } else {
+    $val = '0' if $val =~ /(NAN|inf)$/i; # windows msvcrt
+  }
   if ($PERL510) {
+    # For now the stringification works of NVX to two ints ok. But we might need
+    # to store it as { low, high }.
     $xpvnvsect->comment('$val, $len, $pvmax, $sv->IVX');
     $xpvnvsect->add(
-      sprintf( "{%g}, %u, %u, {%d}", $val, $len, $pvmax, $sv->IVX ) );    # ??
+      sprintf( "{%s}, %u, %u, {%d}", $val, $len, $pvmax, $sv->IVX ) );    # ??
+    unless ($sv->FLAGS & (SVf_NOK|SVp_NOK)) {
+      warn "NV => run-time union xpad_cop_seq init\n" if $debug{sv};
+      $init->add(sprintf("xpvnv_list[%d].xnv_u.xpad_cop_seq.xlow = %u;",
+                         $xpvnvsect->index, $sv->COP_SEQ_RANGE_LOW),
+                 # XXX pad.c: PAD_MAX = I32_MAX (4294967295)
+                 # gcc warning: this decimal constant is unsigned only in ISO C90
+                 sprintf("xpvnv_list[%d].xnv_u.xpad_cop_seq.xhigh = %u;",
+                         $xpvnvsect->index, $sv->COP_SEQ_RANGE_HIGH));
+    }
   }
   else {
     $xpvnvsect->add(
-      sprintf( "%s, %u, %u, %d, %g", $savesym, $len, $pvmax, $sv->IVX, $val ) );
+      sprintf( "%s, %u, %u, %d, %s", $savesym, $len, $pvmax, $sv->IVX, $val ) );
   }
   $svsect->add(
     sprintf("&xpvnv_list[%d], %lu, 0x%x %s",
@@ -1363,8 +1388,16 @@ sub B::PVMG::save {
                          $xpvmgsect->index, $sv->REFCNT, $sv->FLAGS, $savesym));
   }
   else {
-    $xpvmgsect->add(sprintf("%s, %u, %u, %d, %s, 0, 0",
-			    $savesym, $len, $pvmax, $sv->IVX, $sv->NVX));
+    # cannot initialize this pointer static
+    if ($savesym =~ /&(PL|sv)/) { # (char*)&PL_sv_undef | (char*)&sv_list[%d]
+      $xpvmgsect->add(sprintf("%d, %u, %u, %d, %s, 0, 0",
+			      0, $len, $pvmax, $sv->IVX, $sv->NVX));
+      $init->add( sprintf( "xpvmg_list[%d].xpv_pv = $savesym;",
+			   $xpvmgsect->index ) );
+    } else {
+      $xpvmgsect->add(sprintf("%s, %u, %u, %d, %s, 0, 0",
+			      $savesym, $len, $pvmax, $sv->IVX, $sv->NVX));
+    }
     $svsect->add(sprintf("&xpvmg_list[%d], %lu, 0x%x",
 			 $xpvmgsect->index, $sv->REFCNT, $sv->FLAGS));
   }
@@ -1427,11 +1460,11 @@ sub B::PVMG::save_magic {
     $magic .= $type;
     if ( $debug{mg} ) {
       warn sprintf( "%s magic\n", cchar($type) );
-      eval {
-        warn sprintf( "magic %s (0x%x), obj %s (0x%x), type %s, ptr %s\n",
-                      class($sv), $$sv, class($obj), $$obj, cchar($type),
-		      cstring($ptr) );
-      };
+      #eval {
+      #  warn sprintf( "magic %s (0x%x), obj %s (0x%x), type %s, ptr %s\n",
+      #                class($sv), $$sv, class($obj), $$obj, cchar($type),
+      #		      cstring($ptr) );
+      #};
     }
 
     unless ( $type eq 'r' or $type eq 'D' ) { # r - test 23 / D - Getopt::Long
@@ -1454,40 +1487,33 @@ sub B::PVMG::save_magic {
         )
       );
     }
-    elsif ( $type eq 'r' ) {
+    elsif ( $type eq 'r' ) { # qr magic
       my $rx   = $PERL56 ? ${$mg->OBJ} : $mg->REGEX; # REGEX not in 5.6
-      my $pmop = $REGEXP{$rx};
+      my $pmop = $REGEXP{$rx}; # XXX how should this work?
+      # XXX stored by some PMOP *pm = cLOGOP->op_other (pp_ctl.c)
+      # confess "PMOP not found for REGEXP $rx" unless $pmop; # disabled until fixed
 
-      confess "PMOP not found for REGEXP $rx" unless $pmop;
-
-      my ( $resym, $relen );
-      if ($PERL56) {
-        ;# XXX TODO r-magic still unsupported, need precomp XS method
-         #( $resym, $relen ) = savere( $mg->precomp );
-      }
-      else {
-        ( $resym, $relen ) =
-          savere( $mg->precomp );    # string that generated the regexp
-      }
-      my $pmsym = $pmop->save;
-      if ($PERL510) {
-        $init->add( split /\n/,
-          sprintf
-            <<CODE, $pmop->pmflags, $$sv, cchar($type), cstring($ptr), $len );
+      my ( $resym, $relen ) = savere( $mg->precomp );
+      if ($pmop) { # as long as we don't set %REGEXP we cannot store the qr regexp
+	my $pmsym = $pmop->save;
+	if ($PERL510) {
+	  $init->add( split /\n/,
+		      sprintf <<CODE, $pmop->pmflags, $$sv, cchar($type), cstring($ptr), $len );
 {
     REGEXP* rx = CALLREGCOMP($resym, %d);
     sv_magic((SV*)s\\_%x, (SV*)rx, %s, %s, %d);
 }
 CODE
-      }
-      elsif (!$PERL56) { # XXX TODO r-magic still unsupported
-        $init->add( split /\n/,
-          sprintf <<CODE, $$sv, cchar($type), cstring($ptr), $len );
+        }
+	else {
+	  $init->add( split /\n/,
+		      sprintf <<CODE, $$sv, cchar($type), cstring($ptr), $len );
 {
     REGEXP* rx = pregcomp($resym, $resym + $relen, (PMOP*)$pmsym);
     sv_magic((SV*)s\\_%x, (SV*)rx, %s, %s, %d);
 }
 CODE
+	}
       }
     }
     elsif ( $type eq 'D' ) { # XXX regdata AV
@@ -1539,13 +1565,16 @@ sub B::RV::save {
         sprintf( "xrv_list[%d].xrv_rv = (SV*)%s;\n", $xrvsect->index, $rv ) );
     }
     # one more: bootstrapped XS CVs (test Class::MOP, no simple testcase yet)
-    elsif ( $rv =~ /\(perl_get_cv/ ) {
+    elsif ( $rv =~ /get_cv\(/ ) {
       $xrvsect->add("(SV*)Nullhv");
       $init->add(
         sprintf( "xrv_list[%d].xrv_rv = (SV*)%s;\n", $xrvsect->index, $rv ) );
     }
     else {
-      $xrvsect->add($rv);
+      #$xrvsect->add($rv); # not static initializable (e.g. cv160 for ExtUtils::Install)
+      $xrvsect->add("(SV*)Nullhv");
+      $init->add(
+        sprintf( "xrv_list[%d].xrv_rv = %s;\n", $xrvsect->index, $rv ) );
     }
     $svsect->add(
       sprintf(
@@ -1682,7 +1711,7 @@ sub B::CV::save {
     }
     warn sprintf( "stub for XSUB $cvstashname\:\:$cvname CV 0x%x\n", $$cv )
       if $debug{cv};
-    return qq/(perl_get_cv("$stashname\:\:$cvname",TRUE))/;
+    return qq/get_cv("$stashname\:\:$cvname",TRUE)/;
   }
   if ( $cvxsub && $cvname eq "INIT" ) {
     no strict 'refs';
@@ -2034,8 +2063,8 @@ sub B::GV::save {
       if ( $gvcv->XSUB && $name ne $origname ) {    #XSUB alias
         # must save as a 'stub' so newXS() has a CV to populate
         $init->add("{ CV *cv;");
-        $init->add("\tcv=perl_get_cv($origname,TRUE);");
-        $init->add("\tGvCV($sym)=cv;");
+        $init->add("\tcv = get_cv($origname,TRUE);");
+        $init->add("\tGvCV($sym) = cv;");
         $init->add("\tSvREFCNT_inc((SV *)cv);");
         $init->add("}");
       }
@@ -2623,6 +2652,7 @@ __EOGP
 
 sub output_boilerplate {
   print <<'EOT';
+#define PERL_CORE
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
@@ -2632,6 +2662,12 @@ sub output_boilerplate {
 #define Perl_pp_mapstart Perl_pp_grepstart
 #undef OP_MAPSTART
 #define OP_MAPSTART OP_GREPSTART
+
+/* Since 5.8.8 */
+#ifndef Newx
+#define Newx(v,n,t)    New(0,v,n,t)
+#endif
+
 #define XS_DynaLoader_boot_DynaLoader boot_DynaLoader
 EXTERN_C void boot_DynaLoader (pTHX_ CV* cv);
 
@@ -2732,6 +2768,9 @@ main(int argc, char **argv, char **env)
 
     PERL_SYS_INIT3(&argc,&argv,&env);
 
+#ifdef WIN32
+#define PL_do_undump 0
+#endif
     if (!PL_do_undump) {
 	my_perl = perl_alloc();
 	if (!my_perl)
@@ -2769,7 +2808,7 @@ EOT
 #else
 #define EXTRA_OPTIONS 4
 #endif /* ALLOW_PERL_OPTIONS */
-    New(0,fakeargv, argc + EXTRA_OPTIONS + 1, char *);
+    Newx(fakeargv, argc + EXTRA_OPTIONS + 1, char *);
     fakeargv[0] = argv[0];
     fakeargv[1] = "-e";
     fakeargv[2] = "";
@@ -2874,12 +2913,13 @@ EOT
   #  print "\n#undef USE_DYNAMIC_LOADING
   #}
   print "\n#ifdef USE_DYNAMIC_LOADING";
-  print qq/\n\tnewXS("DynaLoader::boot_DynaLoader", boot_DynaLoader, file);/;
+  print "\n\tnewXS(\"DynaLoader::boot_DynaLoader\", boot_DynaLoader, file);";
   print "\n#endif\n";
 
   # delete $xsub{'DynaLoader'};
   delete $xsub{'UNIVERSAL'};
-  print("/* bootstrapping code*/\n\tSAVETMPS;\n");
+  print("/* XS bootstrapping code*/\n");
+  print("\tSAVETMPS;\n");
   print("\ttarg=sv_newmortal();\n");
   print "#ifdef USE_DYNAMIC_LOADING\n";
   foreach my $stashname ( keys %static_ext ) {
@@ -2887,39 +2927,44 @@ EOT
     $stashxsub =~ s/::/__/g;
     #if ($stashxsub =~ m/\/(\w+)\.\w+$/ {$stashxsub = $1;}
     # cygwin has Win32CORE
+    warn "bootstrapping static $stashname added to xs_init\n" if $verbose;
     print "\tnewXS(\"${stashname}::bootstrap\", boot_$stashxsub, file);\n";
   }
   print "#endif\n";
   print "#ifdef USE_DYNAMIC_LOADING\n";
   print "\tPUSHMARK(sp);\n";
-  print qq/\tXPUSHp("DynaLoader", strlen("DynaLoader"));\n/;
-  print qq/\tPUTBACK;\n/;
+  printf "\tXPUSHp(\"DynaLoader\", %d);\n", length("DynaLoader");
+  print "\tPUTBACK;\n";
+  warn "bootstrapping DynaLoader added to xs_init\n" if $verbose;
   print "\tboot_DynaLoader(aTHX_ NULL);\n";
-  print qq/\tSPAGAIN;\n/;
+  print "\tSPAGAIN;\n";
   print "#endif\n";
 
   foreach my $stashname ( keys %xsub ) {
     if ( $xsub{$stashname} !~ m/Dynamic/ and !$static_ext{$stashname} ) {
       my $stashxsub = $stashname;
+      warn "bootstrapping $stashname added to xs_init\n" if $verbose;
       $stashxsub =~ s/::/__/g;
       print "\tPUSHMARK(sp);\n";
-      print qq/\tXPUSHp("$stashname",strlen("$stashname"));\n/;
-      print qq/\tPUTBACK;\n/;
+      printf "\tXPUSHp(\"%s\", %d);\n", $stashname, length($stashname);
+      print "\tPUTBACK;\n";
       print "\tboot_$stashxsub(aTHX_ NULL);\n";
-      print qq/\tSPAGAIN;\n/;
+      print "\tSPAGAIN;\n";
     }
   }
-  print("\tFREETMPS;\n/* end bootstrapping code */\n");
+  print "\tFREETMPS;\n/* end XS bootstrapping code */\n";
   print "}\n";
 
   print <<'EOT';
+
 static void
 dl_init(pTHX)
 {
 	/* char *file = __FILE__; */
 EOT
   print "\tdTARG;\n\tdSP;\n" if @DynaLoader::dl_modules;
-  print("/* Dynamicboot strapping code*/\n\tSAVETMPS;\n");
+  print("/* DynaLoader bootstrapping */\n");
+  print("\tSAVETMPS;\n");
   print("\ttarg=sv_newmortal();\n");
   foreach my $stashname (@DynaLoader::dl_modules) {
     warn "Loaded $stashname\n" if $verbose;
@@ -2927,23 +2972,24 @@ EOT
       my $stashxsub = $stashname;
       $stashxsub =~ s/::/__/g;
       print "\tPUSHMARK(sp);\n";
-      print qq/\tXPUSHp("$stashname",/, length($stashname), qq/);\n/;
+      printf "\tXPUSHp(\"%s\", %d);\n", $stashname, length($stashname);
+      #print qq/\tXPUSHp("$stashname",/, length($stashname), qq/);\n/;
       print qq/\tPUTBACK;\n/;
       print "#ifdef USE_DYNAMIC_LOADING\n";
-      warn "bootstrapping $stashname added to xs_init\n" if $verbose;
+      warn "bootstrapping $stashname added to dl_init\n" if $verbose;
       if ( $xsub{$stashname} eq 'Dynamic' ) {
-        print qq/\tperl_call_method("bootstrap",G_DISCARD);\n/;
+        print qq/\tcall_method("bootstrap",G_DISCARD);\n/;
       }
       else {
-        print qq/\tperl_call_pv("XSLoader::load",G_DISCARD);\n/;
+        print qq/\tcall_pv("XSLoader::load",G_DISCARD);\n/;
       }
       print "#else\n";
       print "\tboot_$stashxsub(aTHX_ NULL);\n";
       print "#endif\n";
-      print qq/\tSPAGAIN;\n/;
+      print "\tSPAGAIN;\n";
     }
   }
-  print("\tFREETMPS;\n/* end Dynamic bootstrapping code */\n");
+  print "\tFREETMPS;\n/* end DynaLoader bootstrapping */\n";
   print "}\n";
 }
 
