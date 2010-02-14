@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               B-C
-version:            1.19
+version:            1.20
 abstract:           Perl compiler
 author:
     - Malcolm Beattie <mbeattie@sable.ox.ac.uk>, Reini Urban <perl-compiler@googlegroups.com>

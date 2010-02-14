@@ -9,7 +9,7 @@
 
 package B::C;
 
-our $VERSION = '1.19';
+our $VERSION = '1.20';
 
 package B::C::Section;
 
@@ -2666,6 +2666,13 @@ sub output_boilerplate {
 /* Since 5.8.8 */
 #ifndef Newx
 #define Newx(v,n,t)    New(0,v,n,t)
+#endif
+/* No longer available when C<PERL_CORE> is defined. */
+#ifndef Nullsv
+#define Null(type) ((type)NULL)
+#define Nullsv Null(SV*)
+#define Nullhv Null(HV*)
+#define Nullgv Null(GV*)
 #endif
 
 #define XS_DynaLoader_boot_DynaLoader boot_DynaLoader
