@@ -93,11 +93,19 @@ sub get_module_list {
   close F;
   @modules = grep {s/\s+//g;!/^#/} split /\n/, $s;
 
-  diag "scanning installed modules";
+  #diag "scanning installed modules";
   for my $m (@modules) {
+    # redirect stderr
+    open (SAVEOUT, ">&STDERR");
+    close STDERR;
+    open (STDERR, ">", \$modules::saveout);
     if (eval "require $m; 1;" || $m eq 'if' ) {
       $modules{$m} = 1;
     }
+    # restore stderr
+    close STDERR;
+    open (STDERR, ">&SAVEOUT");
+    close SAVEOUT;
   }
 
   if (! -e '.svn' || grep /^-subset$/, @ARGV) {
@@ -119,6 +127,16 @@ sub random_sublist {
   return keys %sublist;
 }
 
+# for t/testm.sh -s
+sub skip_modules {
+  my @modules = get_module_list;
+  my @skip = ();
+  for my $m (@modules) {
+    push @skip, ($m) unless $modules{$m};
+  }
+  @skip;
+}
+
 # preparing automatic module tests
 
 package CPAN::Shell;
@@ -135,7 +153,7 @@ sub testcc   {
     # $CPAN::DEBUG++;
     my $cwd = Cwd::getcwd();
     # posix shell only, but we are using a posix shell here. XXX -Wb=-uTest::Builder
-    $self->prefs->{test}->{commandline} = "for t in t/*.t; do $^X -I$cwd/blib/arch -I$cwd/blib/lib $cwd/blib/script/perlcc -r -stash \$t; done";
+    $self->prefs->{test}->{commandline} = "for t in t/*.t; do echo \$t; $^X -I$cwd/blib/arch -I$cwd/blib/lib $cwd/blib/script/perlcc -r -stash \$t; done";
     $self->prefs->{test_report} = ''; # XXX ignored!
     $self->{make_test} = 'NO'; # override YAML check "Has already been tested successfully"
     $self->test(@_);
