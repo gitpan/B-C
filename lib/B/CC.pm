@@ -1132,7 +1132,14 @@ sub pp_aelemfast {
   my $op = shift;
   my $gvsym;
   if ($ITHREADS) { #padop XXX if it's only a OP, no PADOP? t/CORE/op/ref.t test 36
-    $gvsym = $op->can('padix') ? $pad[ $op->padix ]->as_sv : "''";
+    if ($op->can('padix')) {
+      $gvsym = $pad[ $op->padix ]->as_sv;
+    } else {
+      $gvsym = 'PL_incgv'; # XXX passes, but need to investigate why. cc test 43 5.10.1
+      #write_back_stack();
+      #runtime("PUSHs(&PL_sv_undef);");
+      #return $op->next;
+    }
   }
   else { #svop
     $gvsym = $op->gv->save;
@@ -1738,8 +1745,15 @@ sub pp_entertry {
   write_back_stack();
   my $sym = doop($op);
   $entertry_defined = 1;
-  runtime(sprintf( "PP_ENTERTRY(%s);",
-                   label( $op->other->next ) ) );
+  if (!$op->can("other")) { # 5.11.4-nt t/c_argv.t nok 2
+    debug "ENTERTRY label \$op->next (no other)";
+    runtime(sprintf( "PP_ENTERTRY(%s);",
+		     label( $op->next ) ) );
+  } else {
+    debug "ENTERTRY label \$op->other->next";
+    runtime(sprintf( "PP_ENTERTRY(%s);",
+		     label( $op->other->next ) ) );
+  }
   invalidate_lexicals( REGISTER | TEMPORARY );
   return $op->next;
 }

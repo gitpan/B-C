@@ -3,13 +3,15 @@
 # => $^X -Mblib blib/script/perlcc -S -e 'use File::Temp; print "ok"' -o file_temp
 #
 # How to installed skip modules:
-# grep ^skip log.modules-bla|cut -c6-| xargs perlbla -S cpan
-
-# In work: Try to run CPAN::Shell->testcc($module) with -t
+#  grep ^skip log.modules-bla|cut -c6-| xargs perlbla -S cpan
+#  perl5.11.4-nt -S cpan `grep -v '#' t/mymodules`
+#
+# -t run CPAN::Shell->testcc($module)
 
 function help {
   echo "t/testm.sh [OPTIONS] [module|modules-file]..."
   echo " -k                 keep temp. files on PASS"
+  echo " -l                 log"
   echo " -o                 orig. no -Mblib, use installed modules (5.6, 5.8)"
   echo " -t                 run the module tests also, not only use Module (experimental)"
   echo " -s                 install skipped (missing) modules"
@@ -20,6 +22,7 @@ function help {
 # perl5.10.0d-nt, perl5.11.0, ...)
 PERL=`grep "^PERL =" Makefile|cut -c8-`
 PERL=${PERL:-perl}
+Mblib=-Mblib
 
 function vcmd {
     test -n "$QUIET" || echo $*
@@ -39,17 +42,15 @@ function fail {
     echo
 }
 
-# 
-# getopts for -q -k -E -Du,-q -v -O2, -a -c
-while getopts "hckots" opt
+while getopts "hoklts" opt
 do
   if [ "$opt" = "o" ]; then Mblib=" "; init; fi
-  if [ "$opt" = "c" ]; then CONT=1; fi
-  if [ "$opt" = "k" ]; then KEEP=1; fi
+  if [ "$opt" = "k" ]; then KEEP="-S"; fi
+  if [ "$opt" = "l" ]; then TEST="-log"; fi
   if [ "$opt" = "t" ]; then TEST="-t"; fi
   if [ "$opt" = "s" ]; then 
       v=$($PERL -It -Mmodules -e'print perlversion')
-      if [ -f log.modules-$v ]; then
+      if [ -f log.modules-$v ]; then # and not older than a few days
           grep ^skip log.modules-$v | cut -c6- | xargs $PERL -S cpan
       else
           $PERL -S cpan $($PERL $Mblib -It -Mmodules -e'$,=" "; print skip_modules')
@@ -76,8 +77,8 @@ if [ -n "$1" ]; then
 	while [ -n "$1" ]; do
 	    # single module
 	    name="$(perl -e'$ARGV[0]=~s{::}{_}g; print lc($ARGV[0])' $1)"
-	    echo $PERL $Mblib blib/script/perlcc -r -S -e "\"use $1; print 'ok'\"" -o $name
-	    $PERL $Mblib blib/script/perlcc -r -S -e "use $1; print 'ok'" -o $name
+	    echo $PERL $Mblib blib/script/perlcc -r $KEEP -e "\"use $1; print 'ok'\"" -o $name
+	    $PERL $Mblib blib/script/perlcc -r $KEEP -e "use $1; print 'ok'" -o $name
 	    mv a.out.c $name.c
 	    [ -n "$TEST" ] && $PERL $Mblib -It -MCPAN -Mmodules -e"CPAN::Shell->testcc(q($1))"
 	    shift

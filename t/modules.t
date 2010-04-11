@@ -1,18 +1,24 @@
 # -*- cperl -*-
-# t/modules.t [-all] [t/mymodules]
+# t/modules.t [OPTIONS] [t/mymodules]
 # check if some common CPAN modules exist and
 # can be compiled successfully. Only B::C is fatal,
 # CC and Bytecode optional. Use -all for all three (optional), and
 # -log for the reports (now default).
 #
+# OPTIONS:
+#  -all     - run also B::CC and B::Bytecode
+#  -subset  - run only random 10 of all modules. default if ! -d .svn
+#  -t       - run also tests
+#  -log     - save log file. default on top100 and without subset
+#
 # The list in t/mymodules comes from two bigger projects.
 # Recommended general lists are Task::Kensho and http://ali.as/top100/
 # We are using top100 from the latter.
-# We are NOT running the full module testsuite yet, we can do that
+# We are NOT running the full module testsuite yet with -t, we can do that
 # in another author test to burn CPU for a few hours resp. days.
 #
 # Reports:
-# for p in 5.6.2d-nt 5.8.9 5.10.1 5.11.4d-nt; do make -S clean; perl$p Makefile.PL; make; perl$p -Mblib t/modules.t -log; done
+# for p in 5.6.2d-nt 5.8.9 5.10.1 5.11.4d 5.11.4d-nt; do make -S clean; perl$p Makefile.PL; make; perl$p -Mblib t/modules.t -log; done
 #
 # How to installed skip modules:
 # grep ^skip log.modules-bla|cut -c6-| xargs perlbla -S cpan
@@ -53,12 +59,13 @@ $do_test = 1 if grep /^-t$/, @ARGV;
 # Determine list of modules to action.
 diag "scanning installed modules";
 our @modules = get_module_list();
-my $test_count = scalar @modules * $opts_to_test * 4;
+my $test_count = scalar @modules * $opts_to_test * ($do_test ? 5 : 4);
 # $test_count -= 4 * $opts_to_test * (scalar @modules - scalar(keys %modules));
 plan tests => $test_count;
 
 use Config;
 use B::C;
+use POSIX qw(strftime);
 
 eval { require IPC::Run; };
 my $have_IPC_Run = defined $IPC::Run::VERSION;
@@ -67,14 +74,13 @@ log_diag("Warning: IPC::Run is not available. Error trapping will be limited, no
 
 my @opts = ("");				  # only B::C
 @opts = ("", "-O", "-B") if grep /-all/, @ARGV;  # all 3 compilers
-my $perlversion;
+my $perlversion = perlversion();
 $log = 1 if -d '.svn';
 $log = 0 if @ARGV;
 $log = 1 if grep /-log/, @ARGV or $ENV{TEST_LOG};
 
-$perlversion = perlversion();
 if ($log) {
-  $log = @ARGV ? "log.modules-$perlversion-".scalar(localtime)
+  $log = @ARGV ? "log.modules-$perlversion-".strftime("%Y%m%d-%H%M%S",localtime)
     : "log.modules-$perlversion";
   if (-e $log) {
     use File::Copy;
@@ -83,11 +89,13 @@ if ($log) {
   open(LOG, ">", "$log");
   close LOG;
 }
-log_diag("B::C::VERSION = $B::C::VERSION");
-log_diag("perlversion = $perlversion");
-log_diag("path = $^X");
-log_diag("platform = $^O");
-log_diag($Config{'useithreads'} ? "threaded perl" : "non-threaded perl");
+unless (is_subset) {
+  log_diag("B::C::VERSION = $B::C::VERSION");
+  log_diag("perlversion = $perlversion");
+  log_diag("path = $^X");
+  log_diag("platform = $^O");
+  log_diag($Config{'useithreads'} ? "threaded perl" : "non-threaded perl");
+}
 
 my $module_count = 0;
 my ($skip, $pass, $fail, $todo) = (0,0,0,0);
@@ -151,6 +159,12 @@ for my $module (@modules) {
             && ($module_passed)
               or log_err($module, $out, $err)
             }
+      }
+      if ($do_test) {
+        TODO: {
+          local $TODO = 'all module tests';
+          `$^X -Mblib -It -MCPAN -Mmodules -e"CPAN::Shell->testcc("$module")"`;
+        }
       }
       unlink ("mod.pl", 'a', 'a.out');
     }}

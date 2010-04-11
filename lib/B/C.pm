@@ -9,7 +9,7 @@
 
 package B::C;
 
-our $VERSION = '1.24';
+our $VERSION = '1.25';
 
 package B::C::Section;
 
@@ -124,7 +124,7 @@ sub output {
   foreach my $i ( @{ $section->[-1]{chunks} } ) {
     # dTARG and dSP unused -nt
     print $fh <<"EOT";
-static int perl_init_${name}()
+static int perl_init_${name}(pTHX)
 {
 	/* dTARG;
 	   dSP; */
@@ -136,7 +136,7 @@ EOT
     }
     print $fh "\treturn 0;\n}\n";
 
-    $section->SUPER::add("perl_init_${name}();");
+    $section->SUPER::add("perl_init_${name}(aTHX);");
     ++$name;
   }
   foreach my $i ( @{ $section->[-1]{evals} } ) {
@@ -144,7 +144,7 @@ EOT
   }
 
   print $fh <<"EOT";
-static int ${init_name}()
+static int ${init_name}(pTHX)
 {
 	/* dTARG;
 	   dSP; */
@@ -1473,7 +1473,7 @@ sub B::PVMG::save_magic {
       #};
     }
 
-    unless ( $type eq 'r' or $type eq 'D' ) { # r - test 23 / D - Getopt::Long
+    unless ( $type eq 'r' or $type eq 'D' or $type eq 'n' ) { # r - test 23 / D - Getopt::Long
       # 5.10: Can't call method "save" on unblessed reference
       #warn "Save MG ". $obj . "\n" if $PERL510;
       # 5.11 'P' fix in B::IV::save, IV => RV
@@ -1488,7 +1488,7 @@ sub B::PVMG::save_magic {
       warn "MG->PTR is an SV*\n" if $debug{mg};
       $init->add(
         sprintf(
-          "sv_magic((SV*)s\\_%x, (SV*)s\\_%x, %s,(char *) %s, %d);",
+          "sv_magic((SV*)s\\_%x, (SV*)s\\_%x, %s, (char *)%s, %d);",
           $$sv, $$obj, cchar($type), $ptrsv, $len
         )
       );
@@ -1528,6 +1528,23 @@ CODE
 	$init->add(sprintf("sv_magic((SV*)s\\_%x, (SV*)s\\_%x, %s, %s, %d);",
 			   $$sv, $$sv, "'D'", cstring($ptr), $len ));
       }
+    }
+    elsif ( $type eq 'n' ) { # shared_scalar is from XS dist/threads-shared
+      # XXX check if threads is loaded also? otherwise it is only stubbed
+      if ( $threads::VERSION ) {
+	my $stash = 'threads';
+	mark_package($stash);
+	$use_xsloader = 1;
+	$xsub{$stash} = 'Dynamic-XSLoaded';
+      }
+      my $stash = 'threads::shared';
+      mark_package($stash);
+      # XXX why is this needed? threads::shared should be initialized automatically
+      $use_xsloader = 1; # ensure threads::shared is initialized
+      # push @DynaLoader::dl_modules, ($stash);
+      $xsub{$stash} = 'Dynamic-XSLoaded';
+      $init->add(sprintf("sv_magic((SV*)s\\_%x, Nullsv, %s, %s, %d);",
+			   $$sv, "'n'", cstring($ptr), $len ));
     }
     else {
       $init->add(
@@ -1681,11 +1698,12 @@ sub B::CV::save {
   }
 
   #INIT is removed from the symbol table, so this call must come
-  # from PL_initav->save. Re-bootstrapping  will push INIT back in
+  # from PL_initav->save. Re-bootstrapping  will push INIT back in,
   # so nullop should be sent.
   if ( !$isconst && $cvxsub && ( $cvname ne "INIT" ) ) {
     my $egv       = $gv->EGV;
     my $stashname = $egv->STASH->NAME;
+    my %static_pkg = map {$_=>1} static_xs_packages(); # do not bootstrap static core packages
     if ( $cvname eq "bootstrap" ) {
       my $file = $gv->FILE;
       $decl->add("/* bootstrap $file */");
@@ -1715,9 +1733,12 @@ sub B::CV::save {
           qw(IO::File IO::Handle IO::Socket
           IO::Seekable IO::Poll);
     }
-    warn sprintf( "stub for XSUB $cvstashname\:\:$cvname CV 0x%x\n", $$cv )
-      if $debug{cv};
-    return qq/get_cv("$stashname\:\:$cvname",TRUE)/;
+    unless ($static_pkg{$stashname}) {
+      warn sprintf( "stub for XSUB $cvstashname\:\:$cvname CV 0x%x\n", $$cv )
+	if $debug{cv};
+      # svref_2object( \&{"$cvstashname::bootstrap"} )->save;
+      return qq/get_cv("$stashname\:\:$cvname",TRUE)/;
+    }
   }
   if ( $cvxsub && $cvname eq "INIT" ) {
     no strict 'refs';
@@ -2506,8 +2527,8 @@ sub output_all {
     if ($lines) {
       my $name = $section->name;
       my $typename = ( $name eq "xpvcv" ) ? "XPVCV_or_similar" : uc($name);
-      # -fcog hack to statically initialize PVs
-      $typename = 'SVPV' if $typename eq 'SV' and $PERL510 and $B::C::pv_copy_on_grow;
+      # -fcog hack to statically initialize PVs (SVPV for 5.10-5.11 only)
+      $typename = 'SVPV' if $typename eq 'SV' and $PERL510 and $B::C::pv_copy_on_grow and $] < 5.012;
       print "Static $typename ${name}_list[$lines];\n";
     }
   }
@@ -2564,7 +2585,8 @@ EOT
   # *first* sv_u element to be able to statically initialize it. A int does not allow it.
   # gcc error: initializer element is not computable at load time
   # We introduce a SVPV as SV.
-  if ($PERL510 and $B::C::pv_copy_on_grow) {
+  # In core since 5.12
+  if ($PERL510 and $B::C::pv_copy_on_grow and $] < 5.012) {
     print <<'EOT';
 typedef struct svpv {
     void *	sv_any;
@@ -2688,7 +2710,6 @@ EXTERN_C void boot_DynaLoader (pTHX_ CV* cv);
 
 static void xs_init (pTHX);
 static void dl_init (pTHX);
-static PerlInterpreter *my_perl;
 EOT
   if ($] < 5.008008) {
     print "#define GvSVn(s) GvSV(s)\n";
@@ -2780,6 +2801,7 @@ main(int argc, char **argv, char **env)
     GV* tmpgv;
     SV* tmpsv;
     int options_count;
+    PerlInterpreter *my_perl;
 
     PERL_SYS_INIT3(&argc,&argv,&env);
 
@@ -2861,7 +2883,7 @@ EOT
     $dollar_0 = '"' . $dollar_0 . '"';
 
     print <<EOT;
-    if ((tmpgv = gv_fetchpv("0",TRUE, SVt_PV))) {/* $0 */
+    if ((tmpgv = gv_fetchpv("0", TRUE, SVt_PV))) {/* $0 */
         tmpsv = GvSVn(tmpgv);
         sv_setpv(tmpsv, ${dollar_0});
         SvSETMAGIC(tmpsv);
@@ -2870,7 +2892,7 @@ EOT
   }
   else {
     print <<EOT;
-    if ((tmpgv = gv_fetchpv("0",TRUE, SVt_PV))) {/* $0 */
+    if ((tmpgv = gv_fetchpv("0", TRUE, SVt_PV))) {/* $0 */
         tmpsv = GvSVn(tmpgv);
         sv_setpv(tmpsv, argv[0]);
         SvSETMAGIC(tmpsv);
@@ -2879,7 +2901,7 @@ EOT
   }
 
   print <<'EOT';
-    if ((tmpgv = gv_fetchpv("\030",TRUE, SVt_PV))) {/* $^X */
+    if ((tmpgv = gv_fetchpv("\030", TRUE, SVt_PV))) {/* $^X */
         tmpsv = GvSVn(tmpgv);
 #ifdef WIN32
         sv_setpv(tmpsv,"perl.exe");
@@ -2894,7 +2916,7 @@ EOT
     /* PL_main_cv = PL_compcv; */
     PL_compcv = 0;
 
-    exitstatus = perl_init();
+    exitstatus = perl_init(aTHX);
     if (exitstatus)
 	exit( exitstatus );
     dl_init(aTHX);
@@ -3084,6 +3106,34 @@ sub mark_package {
   return 1;
 }
 
+sub core_packages {
+  my @pkg = qw(attributes Carp Carp::Heavy DB Exporter Exporter::Heavy Internals main Regexp utf8 warnings);
+  if ($] >= 5.010) {
+    @pkg = qw(attributes Carp Carp::Heavy DB Internals main mro re Regexp Tie Tie::Hash Tie::Hash::NamedCapture utf8 version warnings);
+  }
+  if ($] >= 5.011001) {
+    push @pkg, qw(XS::APItest::KeywordRPN);
+  }
+  push @pkg, qw(Win32)                           if $^O eq 'MSWin32';
+  push @pkg, qw(Win32 Win32CORE Cwd Cygwin)      if $^O eq 'cygwin';
+  push @pkg, qw(NetWare)                         if $^O eq 'NetWare';
+  push @pkg, qw(Cwd File File::Copy OS2)         if $^O eq 'os2';
+  push @pkg, qw(VMS VMS::Filespec vmsish Socket) if $^O eq 'VMS';
+  return @pkg;
+}
+
+sub static_xs_packages {
+  my @pkg = qw(Internals main Regexp utf8);
+  if ($] >= 5.010) {
+    @pkg = qw(Internals main mro re Regexp utf8 version);
+  }
+  push @pkg, qw(Win32CORE Cygwin)      	   if $^O eq 'cygwin';
+  push @pkg, qw(NetWare)                   if $^O eq 'NetWare';
+  push @pkg, qw(OS2)         		   if $^O eq 'os2';
+  push @pkg, qw(VMS VMS::Filespec vmsish) if $^O eq 'VMS';
+  return @pkg;
+}
+
 sub should_save {
   no strict qw(vars refs);
   my $package = shift;
@@ -3117,6 +3167,14 @@ sub should_save {
     delete_unsaved_hashINC($package);
     return $unused_sub_packages{$package} = 0;
   }
+
+  # keep core packages
+  #my $qrpkg = "^".join("|",core_packages)."\$";
+  #if ($package =~ /$qrpkg/) {
+  #   warn "Keep core package $package\n" if $debug{pkg};
+      # XXX this does not seem right. better fix the XSUB stub generation for those
+      # return mark_package($package);
+  #}
 
   # Now see if current package looks like an OO class. This is probably too strong.
   foreach my $m (qw(new DESTROY TIESCALAR TIEARRAY TIEHASH TIEHANDLE)) {
@@ -3685,7 +3743,9 @@ DO NOT USE YET!
 Omit COP info (nextstate without labels, unneeded NULL ops,
 files, linenumbers) for ~10% faster execution and less space,
 but warnings and errors will have no file and line infos.
-It will most likely not work yet. I<(was -fbypass-nullops in earlier compilers)>
+
+It will most likely not work yet. I<(was -fbypass-nullops in earlier
+compilers)>
 
 =back
 
@@ -3754,6 +3814,8 @@ Current status: A few known bugs.
 5.10:
     reading from __DATA__ handles (15) non-threaded
     destruction of static pvs for -O1
+    handling npP magic for shared threaded variables (41-43)
+    detecting internal core package subs (39)
 
 =head1 AUTHOR
 
