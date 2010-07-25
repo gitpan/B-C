@@ -45,6 +45,7 @@ print OUT <<'!NO!SUBS!';
 # Version 2.04, Enache Adrian, Fri, 18 Jul 2003 23:15:37 +0300
 # Version 2.05, Reini Urban, 2009-12-01 00:00:13
 # Version 2.06, Reini Urban, 2009-12-28 21:56:15
+# Version 2.07, Reini Urban, 2010-06-30 22:32:20
 
 use strict;
 use warnings;
@@ -56,8 +57,9 @@ use Fcntl qw(:DEFAULT :flock);
 use File::Temp qw(tempfile);
 use Cwd;
 use Pod::Usage;
-our $VERSION = 2.06;
+our $VERSION = 2.07;
 $| = 1;
+eval { require B::C::Flags; };
 
 $SIG{INT} = sub { exit(); }; # exit gracefully and clean up after ourselves.
 
@@ -333,6 +335,8 @@ sub cc_harness_msvc {
     my $obj = "${Output}.obj";
     my $compile = ExtUtils::Embed::ccopts." -c -Fo$obj $cfile ";
     my $link = "-out:$Output $obj";
+    $compile .= " -DHAVE_INDEPENDENT_COMALLOC" if $B::C::Flags::have_independent_comalloc;
+    $compile .= $B::C::Flags::extra_cflags;
     $compile .= " -I".$_ for split /\s+/, opt(I);
     $link .= " -libpath:".$_ for split /\s+/, opt(L);
     # TODO: -shared,-static,-sharedxs,-staticxs
@@ -346,6 +350,7 @@ sub cc_harness_msvc {
         $link =~ s/ -opt:ref,icf//;
     }
     $link .= " perl5$Config{PERL_VERSION}.lib kernel32.lib msvcrt.lib";
+    $link .= $B::C::Flags::extra_libs;
     vprint 3, "running $Config{cc} $compile";
     system("$Config{cc} $compile");
     vprint 3, "running $Config{ld} $link";
@@ -356,6 +361,8 @@ sub cc_harness {
     my ($cfile,$stash)=@_;
     use ExtUtils::Embed ();
     my $command = ExtUtils::Embed::ccopts." -o $Output $cfile ";
+    $command .= " -DHAVE_INDEPENDENT_COMALLOC" if $B::C::Flags::have_independent_comalloc;
+    $command .= $B::C::Flags::extra_cflags;
     $command .= " -I".$_ for split /\s+/, opt(I);
     $command .= " -L".$_ for split /\s+/, opt(L);
     # TODO: -shared,-static,-sharedxs,-staticxs
@@ -365,7 +372,14 @@ sub cc_harness {
     } else {
         $command .= " ".ExtUtils::Embed::ldopts("-std");
     }
+    my $libdir  = "$Config{prefix}/lib";
+    my $useshrplib = $Config{useshrplib};
+    if ( $useshrplib and -e "$libdir/$Config{libperl}") {
+	# debian: only /usr/lib/libperl.so.5.10.1 and broken ExtUtils::Embed::ldopts
+	$command =~ s|-lperl |$libdir/$Config{libperl} |;
+    }
     # $command .= " -lperl" unless $command =~ / -lperl\b/;
+    $command .= $B::C::Flags::extra_libs;
     vprint 3, "running $Config{cc} $command";
     system("$Config{cc} $command");
 }

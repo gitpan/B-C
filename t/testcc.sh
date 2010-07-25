@@ -47,7 +47,7 @@ CONT=
 # 5.6: rather use -B static
 #CCMD="$PERL script/cc_harness -g3"
 # rest. -DALLOW_PERL_OPTIONS for -Dtlv
-CCMD="$PERL script/cc_harness -d -g3 -Bdynamic -DALLOW_PERL_OPTIONS"  
+CCMD="$PERL $Mblib script/cc_harness -d -g3 -DALLOW_PERL_OPTIONS"  
 LCMD=
 # On some perls I also had to add $archlib/DynaLoader/DynaLoader.a to libs in Config.pm
 }
@@ -228,7 +228,7 @@ result[25]="0 1 2 3`$PERL -e'print (($] < 5.007) ? q( 4 5) : q())'` 4321";
 tests[26]='sub a:lvalue{my $a=26; ${\(bless \$a)}}sub b:lvalue{${\shift}}; print ${a(b)}';
 result[26]="26";
 # xsub constants
-tests[27]='use Fcntl; print "ok" if ( &Fcntl::O_WRONLY );'
+tests[27]='use Fcntl (); print "ok" if ( Fcntl::O_CREAT() == 64 && &Fcntl::O_CREAT == 64 ); '
 result[27]='ok'
 # require $fname
 tests[28]='my($fname,$tmp_fh);while(!open($tmp_fh,">",($fname=q{cctest28_} . rand(999999999999)))){$bail++;die "Failed to create a tmp file after 500 tries" if $bail>500;}print {$tmp_fh} q{$x="ok";1;};close($tmp_fh);require $fname;unlink($fname);print $x;'
@@ -276,6 +276,7 @@ tests[40]='my $var="this string has a null \\000 byte in it";print "ok";'
 result[40]='ok'
 # Shared scalar, n magic. => Don't know how to handle magic of type \156.
 usethreads="`$PERL -MConfig -e'print ($Config{useithreads} ? q(use threads;) : q())'`"
+#usethreads='BEGIN{use Config; unless ($Config{useithreads}) {print "ok"; exit}} '
 #;threads->create(sub{$s="ok"})->join;
 # not yet testing n, only P
 tests[41]=$usethreads'use threads::shared;{my $s="ok";share($s);print $s}'
@@ -289,6 +290,9 @@ result[43]='ok'
 # perl #72922 (5.11.4 fails with magic_killbackrefs)
 tests[44]='use Scalar::Util "weaken";my $re1=qr/foo/;my $re2=$re1;weaken($re2);print "ok" if $re3=qr/$re1/;'
 result[44]='ok'
+# test autoload and xs_init
+tests[45]='use Data::Dumper ();Data::Dumper::Dumper(\%main::);print "ok";'
+result[45]='ok'
 
 # from here on we test CC specifics only
 
@@ -319,7 +323,7 @@ do
     OCMDO2="$(echo $OCMDO2|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
     OCMDO3="$(echo $OCMDO3|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
     OCMDO4="$(echo $OCMDO4|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
-    CCMD="$PERL script/cc_harness -q -g3 -Bdynamic -DALLOW_PERL_OPTIONS"
+    CCMD="$PERL $Mblib script/cc_harness -q -g3 -DALLOW_PERL_OPTIONS"
   fi
   if [ "$opt" = "o" ]; then Mblib=" "; init; fi
   if [ "$opt" = "c" ]; then CONT=1; fi
@@ -335,7 +339,7 @@ do
   fi
   # -B dynamic or -B static
   if [ "$opt" = "B" ]; then 
-    CCMD="$PERL script/cc_harness -d -g3 -B${OPTARG} -DALLOW_PERL_OPTIONS"
+    CCMD="$PERL $Mblib script/cc_harness -d -g3 -B${OPTARG} -DALLOW_PERL_OPTIONS"
   fi
   if [ "$opt" = "O" ]; then OPTIM="$OPTARG"; fi
   if [ "$opt" = "a" ]; then # replace -Du, by -Do

@@ -352,7 +352,7 @@ sub run_cmd {
     else {
 	my $in;
 	my @cmd = split /\s+/, $cmd;
-	
+
 	eval {
 	    my $h = IPC::Run::start(\@cmd, \$in, \$out, \$err);
 	    if ($timeout) {
@@ -403,6 +403,7 @@ sub run_cc_test {
     $opt =~ s/,-/_/ if $opt;
     $opt = '' unless $opt;
     use Config;
+    require B::C::Flags;
     my $test = $fnbackend."code".$cnt.".pl";
     my $cfile = $fnbackend."code".$cnt.$opt.".c";
     my @obj = ($fnbackend."code".$cnt.$opt.".obj",
@@ -431,14 +432,32 @@ sub run_cc_test {
     if (! $? and -s $cfile) {
         use ExtUtils::Embed ();
         my $command = ExtUtils::Embed::ccopts." -o $exe $cfile ";
-        $command .= " ".ExtUtils::Embed::ldopts("-std");
-        $command .= " -lperl" if $command !~ /(-lperl|CORE\/libperl5)/ and $^O ne 'MSWin32';
+	$command .= " -DHAVE_INDEPENDENT_COMALLOC" if $B::C::Flags::have_independent_comalloc;
+	$command .= $B::C::Flags::extra_cflags;
+	my $coredir = $ENV{PERL_SRC} || "$Config{installarchlib}/CORE";
+	my $libdir  = "$Config{prefix}/lib";
+	if ( -e "$coredir/$Config{libperl}" and $Config{libperl} !~ /\.(dll|so)$/ ) {
+	    # prefer static linkage manually, without broken ExtUtils::Embed
+	    $command .= sprintf("%s $coredir/$Config{libperl} %s",
+				@Config{qw(ldflags libs)});
+	} elsif ( $Config{useshrplib} and -e "$libdir/$Config{libperl}" ) {
+	    # debian: /usr/lib/libperl.so.5.10.1 and broken ExtUtils::Embed::ldopts
+	    my $linkargs = ExtUtils::Embed::ldopts('-std');
+	    $linkargs =~ s|-lperl |$libdir/$Config{libperl} |;
+	    $command .= $linkargs;
+	    #$command .= sprintf("%s $libdir/$Config{libperl} %s",
+	    #			@Config{qw(ldflags libs)});
+	} else {
+	    $command .= " ".ExtUtils::Embed::ldopts("-std");
+	    $command .= " -lperl" if $command !~ /(-lperl|CORE\/libperl5)/ and $^O ne 'MSWin32';
+	}
+	$command .= $B::C::Flags::extra_libs;
         my $NULL = $^O eq 'MSWin32' ? '' : '2>/dev/null';
 	if ($^O eq 'MSWin32' and $Config{ccversion} eq '12.0.8804' and $Config{cc} eq 'cl') {
 	    $command =~ s/ -opt:ref,icf//;
 	}
         my $cmdline = "$Config{cc} $command $NULL";
-        run_cmd($cmdline,20);
+        run_cmd($cmdline, 20);
         unless (-e $exe) {
             print "not ok $cnt $todo failed $cmdline\n";
             print STDERR "# ",system("$Config{cc} $command"), "\n";
@@ -446,7 +465,8 @@ sub run_cc_test {
             return 0;
         }
         $exe = "./".$exe unless $^O eq 'MSWin32';
-        ($result,$out,$stderr) = run_cmd($exe,5);
+	# system("/bin/bash -c ulimit -d 1000000") if -e "/bin/bash";
+        ($result,$out,$stderr) = run_cmd($exe, 5);
         if (defined($out) and !$result) {
             if ($cnt == 25 and $expect eq '0 1 2 3 4321' and $] < 5.008) {
                 $expect = '0 1 2 3 4 5 4321';
@@ -498,32 +518,36 @@ sub todo_tests_default {
     my $ITHREADS  = ($Config{useithreads});
 
     my @todo  = (39); # 8,14-16 fail on 5.00505 (max 20 then)
-    if ($what =~ /^c(|_o[1-4])/) {
-        @todo     = (27,39)    if !$ITHREADS;
+    if ($what =~ /^c(|_o[1-4])$/) {
+        @todo     = (39)    if !$ITHREADS;
         # 14+23 fixed with 1.04_29, for 5.10 with 1.04_31
         # 15+28 fixed with 1.04_34
         # 5.6.2 CORE: 8,15,16,22. 16 fixed with 1.04_24, 8 with 1.04_25
         # 5.8.8 CORE: 11,14,15,20,23 / non-threaded: 5,7-12,14-20,22-23,25
-        @todo = (15,27,41..44) if $] < 5.007;
+        @todo = (15,41..44) if $] < 5.007;
         # on cygwin 29 passes
-        @todo = (29,39,41)     if $] >= 5.010;
-        @todo = (15,39)        if $] >= 5.010 and !$ITHREADS;
+        @todo = (29,39,41,44)  if $] >= 5.010;
+        @todo = (15,39,44)     if $] >= 5.010 and !$ITHREADS;
         if ($what eq 'c_o4') {
             push @todo, (10,12,19,25);
         }
     } elsif ($what =~ /^cc/) {
         # 8,11,14..16,18..19 fail on 5.00505 + 5.6, old core failures (max 20)
         # on cygwin 29 passes
-        my @todo = (18,21,25,27,29,30,39); #5.8.9
+        @todo = (18,21,25,29,30,39); #5.8.9
         push @todo, (15,41..44)           if $] < 5.007;
         @todo    = (18,21,25,29,30,39,41) if $] >= 5.010;
         @todo    = (10,16,18,21,25,29,30,39,41) if $] >= 5.010 and $what eq 'cc_o2';
         # solaris and debian also. I suspect nvx<=>cop_seq_*
         push @todo, (12) if $^O eq 'MSWin32' and $Config{cc} =~ /^cl/i;
+        push @todo, (44);
+        push @todo, (103) if $] >= 5.013002;
 
         push @todo, (26) if $what =~ /^cc_o[12]/;
     }
-    push @todo, (32)   if $] >= 5.011003;
+    push @todo, (41,42,43) if !$ITHREADS;
+    push @todo, (32)       if $] >= 5.011003;
+    push @todo, (45)  if $] >= 5.007;
     return @todo;
 }
 
@@ -588,7 +612,7 @@ CCTESTS
         if ($cnt == 29 and $Config{cc} =~ /^cl/i and $backend ne 'C') {
             $todo{$cnt} = $skip{$cnt} = 1;
         }
-        if ($todo{$cnt} and $skip{$cnt} and !$AUTHOR) {
+        if ($todo{$cnt} and $skip{$cnt} and (!$AUTHOR or $cnt==18)) {
             print sprintf("ok %d # skip\n", $cnt);
         } else {
             my ($script, $expect) = split />>>+\n/;

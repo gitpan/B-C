@@ -1,13 +1,44 @@
 -*- change-log -*-
 	Started on CPAN with B-C-1.04_12
-	The Perl compiler was in CORE from alpha4 until Perl 5.9.4 and worked 
+	The Perl compiler was in CORE from alpha4 until Perl 5.9.4 and worked
 	quite fine with Perl 5.6 and 5.8
+
+1.26	2010-07-26 rurban
+	Start of 5.14 support, CVs broken.
+
+	* C.pm: improve -fav-init performance if not usemymalloc: no
+	  calloc, just direct libc malloc.
+	-O2 uses -fav-init2, i.e. experimental independent_comalloc(),
+	  -O1 uses now -fav-init (Nick Koston + Reini Urban)
+	Mark a package which is autoloaded from XS.
+	Fix autoloading of constants AKA const xsubcv via AUTOLOAD [test 27] (Nick Koston)
+	5.13.3 support (xpv STASH, MAGIC, ... reorganization), but CVs still failing
+	Check CVv_ANON when setting cv->GV. Fixes anon subs.
+	Do not call REGEXP IVX and NVX methods (since 5.11)
+	* bytecode.pl: CvGv_set since 5.13.3
+	Fixed byteorder 0x stripping causing wrong bget_swab on 64bit
+	* B::C::Flags: new. added by Makefile.PL probing independent_comalloc()
+	* CC.pm: the default -fno-slow-signals adds PERL_ASYNC_CHECK at
+	  the same ops as with 5.13, a major improvement.
+	* Bytecode.pm (1.07), bytecode.pl: xpvav.xiv_u was removed with 5.13.2 but not
+	  used anymore. read and set av_flags only until 5.12, compile only before 5.10
+	Check CVv_ANON when setting cv->GV. Fixes anon subs
+	* bytecode.h: do not PM_SETRE with empty arg. fails since 5.13 debugging
+        * t/testc.sh, t/TESTS: fail test 44, change threads tests 41-43 to TODO
+	* perlcc (2.07), cc_harness, t/test.pl: debian specific fixes for their broken
+	  -lperl linker args for ExtUtils::Embed::ldopts.
+	* t/test.pl: Have complete c/cc TODO/SKIP status in one place.
+	Fixed killing hangling tests with IPC::Run.
+	Fixed new cc TODO.
+	Run CC test 18 even not as AUTHOR
+	* t/c*.t: make test 27 easier to debug (Nick Koston)
+        Added test 45 (Nick Koston)
 
 1.25	2010-04-11 rurban
 	* C.pm: remove global my_perl, pass it properly around.
 	* t/c*.t: added test 40 \000 byte in PV failing on ori 5.6.2 (Nick Koston),
 	added more magic tests for shared vars - n,p,P magic: 39-43. 41 nyi
-	* t/modules.t: fix -t (run module tests), print header only on full test 
+	* t/modules.t: fix -t (run module tests), print header only on full test
 	* t/modules.pm: do not test core or deprecated modules, esp. do not download perl
 	Added is_subset.
 	* t/testm.sh: implement -k
@@ -33,7 +64,7 @@
 	* t/modules.t: Added list of to be skipped modules, which cycle endlessly.
 	Improve todo message.
 	* t/testm.sh: add option -s "install skipped modules"
-	* Makefile.PL, cc_harness, perlcc: fix ldflags for ActivePerl 5.10.0 
+	* Makefile.PL, cc_harness, perlcc: fix ldflags for ActivePerl 5.10.0
 	  for MSVC6 (ccversion 12) -opt:ref,icf leads to invalid outfile "pt:ref,icf"
 	* c+cc test 29 fails on 5.10 randomly. Make it a TODO
 
@@ -49,7 +80,7 @@
 	fail sometimes. Tested ok with strawberry 5.10.1
 
 	* C.pm: fixed evaltry (test 12) mostly, NVX was shared with 2 xpad_cop_seq ints
-	  which accidently just worked before 1.17 with %s, but not after changing 
+	  which accidently just worked before 1.17 with %s, but not after changing
 	  to the %g representation.
 	Ignore unused random (overlong) xpviv IV, causing
 	  "warning: this decimal constant is unsigned only in ISO C90"
@@ -60,7 +91,7 @@
 	Added Win32 workaround for missing PL_do_undump
 	Stripped perl_ prefix from perl_get_cv, perl_call_pv, perl_call_method
 	* CC.pm (1.07): added -fslow-signals.
-	Disabled inlined pp_enter: Fails on empty cxstack. 
+	Disabled inlined pp_enter: Fails on empty cxstack.
 	Backed out inlining of enterloop: GIMME_V fails on freebsd7
 	Remove strawberry PerlProc_setjmp definition, #define PERL_CORE fixed that
 	* Bytecode.pm (1.06): same NVX => xpad_cop_seq fix as in C.pm, added 2 new 

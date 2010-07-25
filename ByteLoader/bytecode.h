@@ -243,16 +243,24 @@ static int bget_swab = 0;
 	hv_store((HV*)sv, bstate->bs_pv.xpv_pv, bstate->bs_pv.xpv_cur, arg, 0)
 #define BSET_pv_free(pv)	Safefree(pv.xpv_pv)
 
+#if (PERL_VERSION > 13 || ((PERL_VERSION == 13) && (PERL_SUBVERSION >= 3)))
+#define BSET_xcv_gv(sv, arg)	(CvGV_set((CV*)bstate->bs_sv, (GV*)arg))
+#else
+#define BSET_xcv_gv(sv, arg)	(*(SV**)&CvGV(bstate->bs_sv) = arg)
+#endif
 
 #ifdef USE_ITHREADS
 
-/* copied after the code in newPMOP() */
+/* Copied after the code in newPMOP().
+   Since 5.13d PM_SETRE(op, NULL) fails
+ */
 #if (PERL_VERSION >= 11)
 #define BSET_pregcomp(o, arg)						\
     STMT_START {                                                        \
-	PM_SETRE(cPMOPx(o), arg                                         \
-                 ? CALLREGCOMP(newSVpvn(arg, strlen(arg)), cPMOPx(o)->op_pmflags) \
-                 : Null(REGEXP*));                                      \
+      if (arg) {							\
+        PM_SETRE(cPMOPx(o),						\
+	         CALLREGCOMP(newSVpvn(arg, strlen(arg)), cPMOPx(o)->op_pmflags)); \
+      }									\
     } STMT_END
 #endif
 #if (PERL_VERSION >= 10) && (PERL_VERSION < 11)
@@ -317,9 +325,10 @@ static int bget_swab = 0;
 #if (PERL_VERSION >= 10)
 #define BSET_pregcomp(o, arg)				\
     STMT_START {					\
-        PM_SETRE((PMOP*)(o), arg			\
-	  ? CALLREGCOMP(newSVpvn(arg, strlen(arg)), cPMOPx(o)->op_pmflags) \
-	  : Null(REGEXP*));				\
+      if (arg) {					\
+        PM_SETRE((PMOP*)(o),				\
+	         CALLREGCOMP(newSVpvn(arg, strlen(arg)), cPMOPx(o)->op_pmflags)); \
+      }							\
     } STMT_END
 #endif
 
