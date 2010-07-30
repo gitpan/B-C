@@ -13,7 +13,7 @@
 
 package B::Bytecode;
 
-our $VERSION = '1.07';
+our $VERSION = '1.08';
 
 #use 5.008;
 use B qw(class main_cv main_root main_start
@@ -28,11 +28,10 @@ BEGIN {
     eval q[
       sub SVp_NOK() {}; # unused
       sub SVf_NOK() {}; # unused
-      sub CVf_ANON() {4};
    ];
   }
   else {
-    B->import(qw(SVp_NOK SVf_NOK CVf_ANON @specialsv_name @optype));
+    B->import(qw(SVp_NOK SVf_NOK @specialsv_name @optype));
   }
   if ( $] > 5.007 ) {
     B->import(qw(defstash curstash inc_gv dowarn
@@ -516,11 +515,7 @@ sub B::IO::bsave {
 sub B::CV::bsave {
   my ( $cv, $ix ) = @_;
   my $stashix   = $cv->STASH->ix;
-  # Since 5.13.3 CVf_ANON fails when setting a GV. Skip it on all versions
-  my $gvix;
-  if (!($cv->CvFLAGS & CVf_ANON)) {
-    $gvix = $cv->GV->ix;
-  }
+  my $gvix = $cv->GV->ix;
   my $padlistix = $cv->PADLIST->ix;
   my $outsideix = $cv->OUTSIDE->ix;
   my $startix   = $cv->START->opwalk;
@@ -533,9 +528,7 @@ sub B::CV::bsave {
   unless ($PERL56) {
     asm "xcv_xsubany",   $cv->CONST ? $cv->XSUBANY->ix : 0;
   }
-  if (!($cv->CvFLAGS & CVf_ANON)) {
-    asm "xcv_gv",          $gvix;
-  }
+  asm "xcv_gv",          $gvix;
   asm "xcv_file",        pvix $cv->FILE if $cv->FILE;    # XXX AD
   asm "xcv_padlist",     $padlistix;
   asm "xcv_outside",     $outsideix;

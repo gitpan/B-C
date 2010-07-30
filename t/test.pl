@@ -342,18 +342,23 @@ sub run_cmd {
     my ($cmd, $timeout) = @_;
 
     my ($result, $out, $err) = (0, '', '');
-    if ( ! $have_IPC_Run ) {
+    if ( ! defined $IPC::Run::VERSION ) {
 	local $@;
+	if (ref($cmd) eq 'ARRAY') {
+            $cmd = join " ", @$cmd;
+        }
 	# No real way to trap STDERR?
-	$cmd .= " 2>&1" if($^O !~ /^MSWin32|VMS/);
+        $cmd .= " 2>&1" if ($^O !~ /^MSWin32|VMS/);
 	$out = `$cmd`;
 	$result = $?;
     }
     else {
 	my $in;
-	my @cmd = split /\s+/, $cmd;
+        # XXX TODO this fails with spaces in path. pass and check ARRAYREF then
+	my @cmd = ref($cmd) eq 'ARRAY' ? @$cmd : split /\s+/, $cmd;
 
 	eval {
+            # XXX TODO hanging or stacktrace'd children are not killed on cygwin
 	    my $h = IPC::Run::start(\@cmd, \$in, \$out, \$err);
 	    if ($timeout) {
 		my $secs10 = $timeout/10;
@@ -476,7 +481,18 @@ sub run_cc_test {
                 unlink ($test, $cfile, $exe, @obj) unless $keep_c;
                 return 1;
             } else {
-                print "not ok $cnt $todo wanted: \"$expect\", got: \"$out\"\n";
+                # cc test failed, double check uncompiled
+                $got = run_perl(verbose  => $ENV{TEST_VERBOSE}, # for debugging
+                                nolib    => $ENV{PERL_CORE} ? 0 : 1, # include ../lib only in CORE
+                                stderr   => 1, # to capture the "ccode.pl syntax ok"
+                                timeout  => 10,
+                                progfile => $test);
+                if (! $? and $got =~ /^$expect$/) {
+                    print "not ok $cnt $todo wanted: \"$expect\", got: \"$out\"\n";
+                } else {
+                    print "ok $cnt # skip also fails uncompiled\n";
+                    return 1;
+                }
                 unlink ($test, $cfile, $exe, @obj) unless $keep_c_fail;
                 return 0;
             }
@@ -517,37 +533,44 @@ sub todo_tests_default {
     my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
     my $ITHREADS  = ($Config{useithreads});
 
-    my @todo  = (39); # 8,14-16 fail on 5.00505 (max 20 then)
+    my @todo  = (15,39,44); # 8,14-16 fail on 5.00505 (max 20 then)
     if ($what =~ /^c(|_o[1-4])$/) {
-        @todo     = (39)    if !$ITHREADS;
+        @todo     = (39)      if !$ITHREADS;
         # 14+23 fixed with 1.04_29, for 5.10 with 1.04_31
         # 15+28 fixed with 1.04_34
         # 5.6.2 CORE: 8,15,16,22. 16 fixed with 1.04_24, 8 with 1.04_25
         # 5.8.8 CORE: 11,14,15,20,23 / non-threaded: 5,7-12,14-20,22-23,25
-        @todo = (15,41..44) if $] < 5.007;
-        # on cygwin 29 passes
-        @todo = (29,39,41,44)  if $] >= 5.010;
-        @todo = (15,39,44)     if $] >= 5.010 and !$ITHREADS;
-        if ($what eq 'c_o4') {
-            push @todo, (10,12,19,25);
-        }
+        @todo = (15,41..45)    if $] < 5.007;
+        @todo = (39,41,44)     if $] >= 5.010;
+        @todo = (15,29,39,44)  if $] >= 5.010 and !$ITHREADS;
+        push @todo, (27)       if $] >= 5.012 and $ITHREADS;
+        push @todo, (6,8..10,16,21,23,24,26,30,31,35) if $] >= 5.013002; #CV broken
+        push @todo, (15,25,42..43)       if $] >= 5.013 and $ITHREADS;
+
+	push @todo, (11)  if $what =~ 'c_o[234]';
+	push @todo, (12,25,28)  if $what =~ 'c_o[234]' and $] >= 5.013002;
+	push @todo, (25) if $what =~ /c_o/ and $^O eq 'MSWin32';
+	push @todo, (10,12,19,25,27)  if $what eq 'c_o4';
     } elsif ($what =~ /^cc/) {
         # 8,11,14..16,18..19 fail on 5.00505 + 5.6, old core failures (max 20)
         # on cygwin 29 passes
-        @todo = (18,21,25,29,30,39); #5.8.9
-        push @todo, (15,41..44)           if $] < 5.007;
+        @todo = (11,18,21,24,25,29,30,39,103); #5.8.9
+        push @todo, (15,41..45)           if $] < 5.007;
         @todo    = (18,21,25,29,30,39,41) if $] >= 5.010;
         @todo    = (10,16,18,21,25,29,30,39,41) if $] >= 5.010 and $what eq 'cc_o2';
         # solaris and debian also. I suspect nvx<=>cop_seq_*
         push @todo, (12) if $^O eq 'MSWin32' and $Config{cc} =~ /^cl/i;
         push @todo, (44);
-        push @todo, (103) if $] >= 5.013002;
+        push @todo, (3,4,27,42,43) if $] >= 5.011004 and $ITHREADS;
+        push @todo, (15,103) if $] >= 5.012001;
+        push @todo, (6,8..10,16,21,23,24,26,30,31,35,101) if $] >= 5.013002; #CV broken
 
+        push @todo, (10,16) if $what eq 'cc_o2';
         push @todo, (26) if $what =~ /^cc_o[12]/;
     }
     push @todo, (41,42,43) if !$ITHREADS;
+    push @todo, (45)       if $] >= 5.007;
     push @todo, (32)       if $] >= 5.011003;
-    push @todo, (45)  if $] >= 5.007;
     return @todo;
 }
 

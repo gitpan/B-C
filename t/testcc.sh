@@ -6,6 +6,7 @@ function help {
   echo "t/testc.sh [OPTIONS] [1-$ntests]"
   echo " -D<debugflags>     for O=C or O=CC. Default: C,-DcOACMSGpu,-v resp. CC,-DoOscprSql,-v"
   echo " -O<0-4>            optimization level"
+  echo " -f<opt>            special optimization"
   echo " -B<static|dynamic> pass to cc_harness"
   echo " -c                 continue on errors"
   echo " -k                 keep temp. files on PASS"
@@ -39,15 +40,11 @@ else
         OCMD="$PERL $Mblib -MO=CC,-DoOscprSql,-v,"
     fi
 fi
-OCMDO1="$(echo $OCMD|sed -e s/C,-D/C,-O1,-D/)"
-OCMDO2="$(echo $OCMD|sed -e s/C,-D/C,-O2,-D/)"
-OCMDO3="$(echo $OCMD|sed -e s/C,-D/C,-O3,-D/)"
-OCMDO4="$(echo $OCMD|sed -e s/C,-D/C,-O4,-D/)"
 CONT=
 # 5.6: rather use -B static
 #CCMD="$PERL script/cc_harness -g3"
 # rest. -DALLOW_PERL_OPTIONS for -Dtlv
-CCMD="$PERL $Mblib script/cc_harness -d -g3 -DALLOW_PERL_OPTIONS"  
+CCMD="$PERL $Mblib script/cc_harness -g3 -DALLOW_PERL_OPTIONS"  
 LCMD=
 # On some perls I also had to add $archlib/DynaLoader/DynaLoader.a to libs in Config.pm
 }
@@ -75,17 +72,12 @@ function fail {
 function runopt {
     o=$1
     optim=$2
+    OCMDO1="$(echo $OCMD|sed -e s/C,-D/C,-O$optim,-D/)"
     suff="_o${optim}"
     if [ "$optim" == "0" ]; then suff=""; fi
     rm ${o}${suff} ${o}${suff}.c 2> /dev/null
-    if [ $optim == 1 ]; then CMD=$OCMDO1
-     else if [ $optim == 2 ]; then CMD=$OCMDO2
-      else if [ $optim == 3 ]; then CMD=$OCMDO3
-       else if [ $optim == 4 ]; then CMD=$OCMDO4
-        else CMD=$OCMD
-       fi
-      fi
-     fi
+    if [ $optim -lt 5 ]; then CMD=$OCMDO1
+    else CMD=$OCMD
     fi
     vcmd ${CMD}-o${o}${suff}.c $o.pl
     test -z $CPP || vcmd $CCMD ${o}${suff}.c -c -E -o ${o}${suff}_E.c
@@ -149,7 +141,7 @@ function ctest {
     fi
 }
 
-ntests=42
+ntests=45
 declare -a tests[$ntests]
 declare -a result[$ntests]
 ncctests=3
@@ -310,8 +302,8 @@ result[103]='B::PV'
 init
 
 # 
-# getopts for -q -k -E -Du,-q -v -O2, -a -c
-while getopts "hqackoED:B:O:" opt
+# getopts for -q -k -E -Du,-q -v -O2, -a -c -fro-inc
+while getopts "hqackoED:B:O:f:" opt
 do
   if [ "$opt" = "q" ]; then 
     QUIET=1
@@ -330,11 +322,14 @@ do
   if [ "$opt" = "k" ]; then KEEP=1; fi
   if [ "$opt" = "E" ]; then CPP=1; fi
   if [ "$opt" = "h" ]; then help; exit; fi
-  # -D options: u,-q for quiet, no -D for verbose
+  # -D options: u,-q for quiet, no -D for verbose, -D- for no gcc warnings
   if [ "$opt" = "D" ]; then
     OCMD="$PERL $Mblib -MO=C,-D${OPTARG},"
     if [ $BASE = "testcc.sh" ]; then 
         OCMD="$PERL $Mblib -MO=CC,-D${OPTARG},"
+    fi
+    if [ -z "${OPTARG/-/}" ]; then
+	CCMD="$PERL $Mblib script/cc_harness -d -g3 -DALLOW_PERL_OPTIONS"  
     fi
   fi
   # -B dynamic or -B static
@@ -342,6 +337,9 @@ do
     CCMD="$PERL $Mblib script/cc_harness -d -g3 -B${OPTARG} -DALLOW_PERL_OPTIONS"
   fi
   if [ "$opt" = "O" ]; then OPTIM="$OPTARG"; fi
+  if [ "$opt" = "f" ]; then
+    OCMD="$(echo $OCMD|sed -e "s/C,/C,-f$OPTARG,/")"
+  fi
   if [ "$opt" = "a" ]; then # replace -Du, by -Do
     OCMD="$(echo $OCMD|sed -r -e 's/(-D.*)u,/\1o,/')" 
   fi

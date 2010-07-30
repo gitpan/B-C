@@ -3,6 +3,26 @@
 	The Perl compiler was in CORE from alpha4 until Perl 5.9.4 and worked
 	quite fine with Perl 5.6 and 5.8
 
+1.27	2010-07-30 rurban
+	Fixed 1.26 CV regressions for 5.8 and 5.10
+
+	* C.pm: add -DF print stringified sv and op flags.
+	fixed xpvio off-by-one error for 5.10 (test 29)
+	rewrote XPVCV forwards for >=5.10: (fails before)
+	  1. only the SV is now forwarded, not the struct.
+	  2. no duplicate SVs, the CV forward is just a link to one SV (#define CVIX)
+	removed wrong CVf_ANON check causing CV failures (test 9,10,12). 5.13.3 still failing
+	fixed CV svsect for 5.8 and 5.10
+	* Bytecode.pm (1.08): removed wrong CVf_ANON check causing CV failures (test 9,10,12,...)
+	* perlcc (2.08): added --time, support vprint -1
+	* t/test.pl, t/bytecode.t: double check failing tests if it works uncompiled
+	* t/testc.sh: add -D- for no gcc warnings
+	added -f for testing single optimizations
+	* t/testm.sh: add -D<args> flags for compiler debugging and link with -g
+	added -T for perlcc --time
+	* t/c_argv.t, script/perlcc: properly quote spaces in path of perl and `cwd`/blib
+	* t/modules.t: add svn rev to B::C::Version
+
 1.26	2010-07-26 rurban
 	Start of 5.14 support, CVs broken.
 
@@ -13,7 +33,7 @@
 	Mark a package which is autoloaded from XS.
 	Fix autoloading of constants AKA const xsubcv via AUTOLOAD [test 27] (Nick Koston)
 	5.13.3 support (xpv STASH, MAGIC, ... reorganization), but CVs still failing
-	Check CVv_ANON when setting cv->GV. Fixes anon subs.
+	Check CVf_ANON when setting cv->GV. Fixes anon subs.
 	Do not call REGEXP IVX and NVX methods (since 5.11)
 	* bytecode.pl: CvGv_set since 5.13.3
 	Fixed byteorder 0x stripping causing wrong bget_swab on 64bit

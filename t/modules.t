@@ -90,10 +90,17 @@ if ($log) {
   close LOG;
 }
 unless (is_subset) {
-  log_diag("B::C::VERSION = $B::C::VERSION");
+  my $svnrev = "";
+  if (-d '.svn') {
+    $svnrev = `svn info|grep Revision:`;
+    chomp $svnrev;
+    $svnrev =~ s/Revision:\s+/r/;
+  }
+  log_diag("B::C::VERSION = $B::C::VERSION $svnrev");
   log_diag("perlversion = $perlversion");
   log_diag("path = $^X");
-  log_diag("platform = $^O");
+  my $bits = 8 * $Config{ptrsize};
+  log_diag("platform = $^O $bits"."bit");
   log_diag($Config{'useithreads'} ? "threaded perl" : "non-threaded perl");
 }
 
@@ -114,11 +121,12 @@ for my $module (@modules) {
       skip("$module not installed", 4 * scalar @opts);
       next MODULE;
     }
-    if (!$have_IPC_Run and is_skip($module)) {
+    if (is_skip($module)) { # !$have_IPC_Run is not really helpful here
+      my $why = is_skip($module);
       $skip++;
-      log_pass("skip", "$module", 0);
+      log_pass("skip", "$module $why", 0);
 
-      skip("$module skipped endless loop", 4 * scalar @opts);
+      skip("$module $why", 4 * scalar @opts);
       next MODULE;
     }
     $module = 'if(1) => "Sys::Hostname"' if $module eq 'if';
@@ -133,15 +141,20 @@ for my $module (@modules) {
       close F or die;
 
       my $module_passed = 1;
+      my $runperl = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
       foreach my $opt (@opts) {
         # my $stderr = $^O eq 'MSWin32' ? "" : ($log ? "2>>$log.err" : "2>/dev/null";
         $opt .= " $keep" if $keep;
-
-        my $cmd = "$^X -Mblib blib/script/perlcc $opt -r";
-        my ($result, $out, $err) = run_cmd("$cmd mod.pl", 600);
+        # XXX TODO ./a often hangs but perlcc not
+        my @cmd = grep {!/^$/} $runperl,"-Mblib","blib/script/perlcc",$opt,"-r","mod.pl";
+        my $cmd = "$runperl -Mblib blib/script/perlcc $opt -r";
+        my ($result, $out, $err) = run_cmd(\@cmd, 120); # in secs
         ok(-e $binary_file && -s $binary_file > 20,
-           "$module_count: use $module  generates non-zero binary") or $module_passed = 0;
-        is($result, 0,  "$module_count: use $module $opt exits with 0") or $module_passed = 0;
+           "$module_count: use $module  generates non-zero binary")
+          or $module_passed = 0;
+        is($result, 0,  "$module_count: use $module $opt exits with 0")
+          or $module_passed = 0;
+	$err =~ s/^Using .+blib\n//m if $] < 5.007;
         like($out, qr/ok$/ms, "$module_count: use $module $opt gives expected 'ok' output")
           or $module_passed = 0;
         log_pass($module_passed ? "pass" : "fail", $module, $TODO);
@@ -163,7 +176,7 @@ for my $module (@modules) {
       if ($do_test) {
         TODO: {
           local $TODO = 'all module tests';
-          `$^X -Mblib -It -MCPAN -Mmodules -e"CPAN::Shell->testcc("$module")"`;
+          `$runperl -Mblib -It -MCPAN -Mmodules -e"CPAN::Shell->testcc("$module")"`;
         }
       }
       unlink ("mod.pl", 'a', 'a.out');
@@ -183,13 +196,13 @@ exit;
 sub is_todo {
   my $module = shift or die;
 
-  foreach (qw(Attribute::Handlers MooseX::Types)) {
+  foreach (qw(ExtUtils::MakeMaker LWP Attribute::Handlers MooseX::Types)) {
     return 'generally' if $_ eq $module;
   }
   if ($] < 5.007) {
     # Can't locate object method "RV" via package "B::PV"
     # (perhaps you forgot to load "B::PV"?) at lib/B/C.pm line 422
-    foreach(qw(ExtUtils::MakeMaker)) {
+    foreach(qw( ExtUtils::CBuilder Sub::Name)) {
       return '< 5.007' if $_ eq $module;
     }
   }
@@ -212,12 +225,28 @@ sub is_todo {
     }
   }
   if ($] > 5.010) {
-    foreach(qw(ExtUtils::Install Test::Harness)) {
+    foreach(qw(ExtUtils::Install Test::Harness Moose)) {
       return '> 5.010' if $_ eq $module;
     }
   }
   if ($] >= 5.013) {
-    foreach(qw(Test)) {
+    foreach(qw(Test
+               Pod::Simple
+               Getopt::Long
+               Pod::Parser
+               ExtUtils::MakeMaker
+               Pod::Text
+               Test
+               Data::Dumper
+               ExtUtils::CBuilder
+               File::Path
+               AppConfig
+               DateTime::TimeZone
+               Path::Class
+               CGI
+               YAML
+              ))
+    {
       return '>= 5.013' if $_ eq $module;
     }
   }
@@ -229,7 +258,30 @@ sub is_todo {
                namespace::clean DateTime::Locale DateTime
                Template::Stash
               )) {
-      return 'with useithreads' if $_ eq $module;
+      return 'with threads' if $_ eq $module;
+    }
+    if ($] >= 5.010 and $] < 5.012) {
+      foreach(qw(
+                 Class::Accessor Class::MOP
+                )) {
+        return '5.10 with threads' if $_ eq $module;
+      }
+    }
+  } else {
+    if ($] >= 5.010 and $] < 5.012) {
+      foreach(qw(
+                 IO ExtUtils::Install Test::Tester Test::Deep Path::Class
+		 Scalar::Util
+                )) {
+        return '5.10 without threads' if $_ eq $module;
+      }
+    }
+    if ($] >= 5.013) {
+      foreach(qw(
+                 DBI
+                )) {
+        return '5.13 without threads' if $_ eq $module;
+      }
     }
   }
 }
@@ -239,7 +291,12 @@ sub is_skip {
 
   if ($] >= 5.011004) {
     foreach (qw(Test::Simple File::Temp Attribute::Handlers)) {
-      return 1 if $_ eq $module;
+      return 'fails $] >= 5.011004' if $_ eq $module;
+    }
+    if ($Config{useithreads}) { # hangs and crashes threaded since 5.12
+      foreach (qw( Moose Class::MOP)) {
+	return 'hangs threaded, $] >= 5.011004' if $_ eq $module;
+      }
     }
   }
 }
