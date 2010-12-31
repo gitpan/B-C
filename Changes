@@ -3,6 +3,101 @@
 	The Perl compiler was in CORE from alpha4 until Perl 5.9.4 and worked
 	quite fine with Perl 5.6 and 5.8
 
+1.28	2010-12-31 rurban
+	fixed XSLoader, pmflags, CV and most named methods for 5.14
+
+	* Bytecode.pm (1.09):
+	fixed cv_gv and push_begin del_backref problem (27, ...) > 5.13
+	special cased op_pmflags: U32 needed since 5.13 (PMf_BASE_SHIFT)
+	  Fixes op_pmflags since 5.12 ((3..4,27..29,31,33), esp. pp_subst
+	start for Windows 5.12 cop_store_label workaround: Labels disabled for now.
+	  Failed to include CORE hv.c: too large.
+	  mingw	5.12 compiles now again and passes all but 21,33,42..44
+	Fixed entrytry with Bytecode >= 5.12:
+	  ck_eval upgrades the UNOP entertry to a LOGOP, but B gets us just a 
+	  B::OP (BASEOP) 
+	add BEGIN { push|unshift @INC } parts of blocks (test 33)
+	* Byteloader (0.07):
+	Support new CvSTASH_set.
+	Basic op_pmflags U16/U32 support. No version conversion yet.
+	BSET_gv_fetchpvn_flags: new for empty constant prototypes (fails on 64bit only)
+	* C.pm: add -fno-destruct (with -O3) with a minimal perl_destruct,
+	  (re-enables -fcog >= 5.10),
+	add -fro-inc (with -O2) readonly INC and curpad strings,
+	add -fconst-strings (with -O3) const readonly strings
+	  and const more other fixed strings,
+	do not boot static core packages (utf8, re, ...),
+	fixed -O2/-fav-init2: store at wrong avchunk index,
+	initialise CopFILE and CopSTASHPV static with ITHREADS
+	improved 5.13 method_named package detection (first and pmreplroot),
+	  in endav still failing (Test::Deep)
+	fixed overwritten CvSTART for 5.13.x
+	do not cog/const nullify vars in END blocks
+	disallow CONST->op_first with CONST_BARE. fixes ExtUtils::Install
+	better XSLoader::load detection: aliases and defined in END blocks
+	save XSLoader::load GV (test 46 and modules), still failing though
+	bootstrap also static core packages
+	add ptr_undef instead of NULL initialization non-threaded
+	fix many cast warnings
+	fix AV fill +1
+	required to run C.xs runloop to find PMOPs for QRs
+	Fixed entrytry >= 5.12 as in Bytecode:
+	  ck_eval upgrades the UNOP entertry to a LOGOP, 
+	  but B gets us just a B::OP (BASEOP) 
+	Fixed XSLoader, loading dynamic modules works now (test 45),
+	  had to set the .pm path in the calling context.
+	* CC.pm (1.08): many fixes
+	use new B::C optimizations, new -DF
+	fixed issue 31 also run C.xs runloop to find PMOPs for QRs,
+	fixed issue 35 same variable name in different scope (Heinz Knutzen),
+	fixed issue 36 panic: leaveloop, no cxstack (Heinz Knutzen)
+	fixed issue 37 orassign (Heinz Knutzen)
+	fixed issue 38 on and/or return value not just no/yes (Heinz Knutzen)
+	fixed issue 39 Bizarre copy of ARRAY in leavesub (Heinz Knutzen)
+	fixed issue 42 remove enter/leave from %no_stack (Heinz Knutzen)
+	fixed issue 44 aelemfast missing for lexicals (Heinz Knutzen)
+	fixed issue 47 anonsub in while (Heinz Knutzen)
+	fixed issue 48 wrong truth value for array assignment in boolean 
+	  context (Heinz Knutzen)
+	fixed issue 49 Can't "last" outside a loop block (Heinz Knutzen)
+	fixed issue 51 errors on nested if statement with test on multiple variables
+	   (Heinz Knutzen)
+	fixed issue 52 errors on variable with numeric value used in second 
+	  expression of 'and' (Heinz Knutzen)
+	add labels for alternate ops (e.g. run-time jumps). Not sure yet if the 
+	  full alternate subtrees are saved. fixes test 32 (push_label, pop_label), 
+	  issue 46. resolve duplicate such labels.
+	honor $ENV{'PERLMODS'} (by cPanel)
+	* Disassembler.pm (1.07): read over #! + use Bytecode .plc header.
+	support pmflags
+	* Assembler.pm (1.09): support pmflags
+	* perlcc (2.09): added cc time for --time.
+	same INC as in caller - omit duplicates
+	* cc_harness: improve -Bstatic
+	* t/testc.sh: simplified. Fixed various wrong tests
+	* t/testm.sh: fixed UAC issues on Win7
+	* t/test.pl: new faster test functions for the new issues
+	* t/issue27.t: added (Reported by alexchorny, Apr 25, 2010)
+	* t/issue29.t: added (Reported by Heinz Knutzen)
+	* t/issue31.t: added (Reported by Heinz Knutzen)
+	* t/issue34.t: added (Reported by Heinz Knutzen)
+	* t/issue35.t: added (Reported and partially fixed by Heinz Knutzen)
+	* t/issue36.t: added (Reported and fixed by Heinz Knutzen)
+	* t/issue37.t: added (Reported and fixed by Heinz Knutzen)
+	* t/issue38.t: added (Reported and fixed by Heinz Knutzen)
+	* t/issue39.t: added (Reported and fixed by Heinz Knutzen)
+	* t/issue42.t: added (Reported and fixed by Heinz Knutzen)
+	* t/issue44.t: added (Reported and fixed by Heinz Knutzen)
+	* t/issue45.t: added (Reported by Heinz Knutzen), dorassign missing
+	* t/issue46.t: added (Reported by Heinz Knutzen), fixed by r610
+	* t/issue47.t: added (Reported and fixed by Heinz Knutzen)
+	* t/issue48.t: added (Reported and fixed by Heinz Knutzen)
+	* t/issue49.t: added (Reported and fixed by Heinz Knutzen)
+	* t/issue50.t: added (Reported by Heinz Knutzen)
+	* t/issue51.t: added (Reported and fixed by Heinz Knutzen)
+	* t/issue52.t: added (Reported and fixed by Heinz Knutzen)
+	* t/issue54.t: added and fixed
+
 1.27	2010-07-30 rurban
 	Fixed 1.26 CV regressions for 5.8 and 5.10
 

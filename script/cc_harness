@@ -9,7 +9,7 @@ my $quiet++ if $ARGV[0] eq '-q';
 shift if $quiet;
 my $debug++ if $ARGV[0] eq '-d';
 shift if $debug;
-require B::C::Flags;
+eval { require B::C::Flags; };
 
 if (grep(/^-[cES]$/, @ARGV)) { # compile-only with -c -E or -S
     ;
@@ -17,15 +17,30 @@ if (grep(/^-[cES]$/, @ARGV)) { # compile-only with -c -E or -S
     use ExtUtils::Embed;
     @ARGV = grep{ !/^-Bdynamic$/o } @ARGV;
     $linkargs = ldopts;
-} elsif ( -e "$coredir/$Config{libperl}" and $Config{libperl} !~ /\.(dll|so)$/ ) {
-    # prefer static linkage manually, without broken ExtUtils::Embed 
-    $linkargs = sprintf("%s $coredir/$Config{libperl} %s",
-		        @Config{qw(ldflags libs)});
+} elsif (grep(/^-Bstatic$/, @ARGV)) { # force static linking with -Bstatic
+    use ExtUtils::Embed;
+    @ARGV = grep{ !/^-Bstatic$/o } @ARGV;
+    $linkargs = ldopts("-std");
+    for my $lib ("$libdir/libperl.a", "$coredir/libperl.a") {
+      if (-e $lib) {
+	$linkargs =~ s|-lperl |$lib |;
+	push @ARGV, ("$coredir/DynaLoader.o") if -e "$coredir/DynaLoader.o";
+	#$linkargs .= " $coredir/Win32CORE.o" if $^O eq 'cygwin' and -e "$coredir/Win32CORE.o";
+	last;
+      }
+    }
+} elsif (-e "$coredir/$Config{libperl}" and $Config{libperl} !~ /\.(dll|so)$/) {
+    $linkargs = ldopts("-std");
 } elsif ( $useshrplib and -e "$libdir/$Config{libperl}") {
     # debian: /usr/lib/libperl.so.5.10.1 and broken ExtUtils::Embed::ldopts
     use ExtUtils::Embed;
     $linkargs = ldopts('-std');
     $linkargs =~ s|-lperl |$libdir/$Config{libperl} |;
+} elsif ( $useshrplib and -e "$coredir/$Config{libperl}") {
+    # just help cygwin debugging
+    use ExtUtils::Embed;
+    $linkargs = ldopts('-std');
+    $linkargs =~ s|-lperl |$coredir/$Config{libperl} |;
 } else { # try dynamic lib if no static lib exists
     use ExtUtils::Embed;
     @ARGV = grep{ !/^-Bdynamic$/o } @ARGV;
@@ -38,7 +53,7 @@ sub cc_harness_msvc {
     my $obj = "${Output}.obj";
     my $compile = ExtUtils::Embed::ccopts." -c -Fo$obj @ARGV ";
     my $link = "-out:$Output $obj";
-    $compile .= " -DHAVE_INDEPENDENT_COMALLOC" if $B::C::Flags::have_independent_comalloc;
+    $compile .= " -DHAVE_INDEPENDENT_COMALLOC " if $B::C::Flags::have_independent_comalloc;
     $compile .= $B::C::Flags::extra_cflags;
     $compile .= " -I".$_ for split /\s+/, opt(I);
     $link .= " -libpath:".$_ for split /\s+/, opt(L);
@@ -68,8 +83,14 @@ if ($^O =~ m/^MSWin/ && $Config{cc} =~ m/^cl/i) {
 #}
 
 my $ccflags = $Config{ccflags};
-$ccflags .= " -ansi -pedantic -Wall -Wextra -Wconversion -Wshadow -Wcast-qual -Wwrite-strings"
-  if $debug and $Config{cc} =~ /gcc/;
+if ($ccflags =~ /-fstack-protector/ and $linkargs =~ /-fstack-protector/) {
+  $linkargs =~ s/-fstack-protector//;
+}
+#-pedantic -Wextra -Wconversion
+$ccflags .= " -ansi -Wall -Wshadow -Wcast-qual -Wwrite-strings"
+  if $debug and $Config{cc} =~ /gcc/ and !$quiet;
+$ccflags .= " --no-warn -Wl,--warn-once"
+  if $Config{cc} =~ /gcc/ and $quiet;
 $ccflags .= " -DHAVE_INDEPENDENT_COMALLOC" if $B::C::Flags::have_independent_comalloc;
 $ccflags .= $B::C::Flags::extra_cflags;
 $linkargs .= $B::C::Flags::extra_libs;

@@ -9,4 +9,3 @@ T_MG_OBJ
 	}
 	else
 	    croak(\"$var is not a reference\")
-

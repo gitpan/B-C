@@ -1,12 +1,12 @@
 #      Disassembler.pm
 #
 #      Copyright (c) 1996 Malcolm Beattie
-#      Copyright (c) 2008,2009 Reini Urban
+#      Copyright (c) 2008,2009,2010 Reini Urban
 #
 #      You may distribute under the terms of either the GNU General Public
 #      License or the Artistic License, as specified in the README file.
 
-$B::Disassembler::VERSION = '1.06';
+$B::Disassembler::VERSION = '1.07';
 
 package B::Disassembler::BytecodeStream;
 
@@ -201,6 +201,17 @@ sub GET_long {
   $Config{longsize} == 8 ? &GET_IV64 : &GET_U32;
 }
 
+sub GET_pmflags {
+  my $fh  = shift;
+  my $size = 2;
+  if ($B::Disassembler::blversion ge '"0.07"') {
+    if ($B::Disassembler::perlversion ge '"5.013"') {
+      return $fh->GET_U32;
+    }
+  }
+  return $fh->GET_U16;
+}
+
 package B::Disassembler;
 use Exporter;
 @ISA       = qw(Exporter);
@@ -220,7 +231,15 @@ our (
 
 sub dis_header($) {
   my ($fh) = @_;
-  $magic = $fh->GET_U32();
+  my $str = $fh->readn(3);
+  if ($str eq '#! ')  {
+    $str .= $fh->GET_comment_t;
+    $str .= $fh->GET_comment_t;
+    $magic = $fh->GET_U32;
+  } else {
+    $str .= $fh->readn(1);
+    $magic = unpack( "L", $str );
+  }
   warn("bad magic") if $magic != 0x43424c50;
   $archname  = $fh->GET_strconst();
   $blversion = $fh->GET_strconst();
@@ -435,7 +454,7 @@ B<longsize> is $Config{longsize} of the assembling perl.
 A number, 4 or 8.
 Only since blversion 0.06_03.
 
-B<byteorder> is a string of "0x12345678" on big-endian or "0x56781234" (?)
+B<byteorder> is a string of "0x12345678" on big-endian or "0x78563412" (?)
 on little-endian machines. The beginning "0x" is stripped for compatibility
 with intermediate ByteLoader versions, i.e. 5.6.1 to 5.8.0,
 Added with blversion 0.06_03, and also with blversion 0.04.
@@ -445,13 +464,13 @@ B<archflag> is a bitmask of opcode platform-dependencies.
 Currently used is only bit 1 for USE_ITHREADS.
 Added with  blversion 0.06_05.
 
-B<perlversion> $] of the perl, which produced this bytecode, as string.
+B<perlversion> $] of the perl which produced this bytecode as string.
 Added with blversion 0.06_06.
 
 =head1 AUTHORS
 
-Malcolm Beattie, C<mbeattie@sable.ox.ac.uk>.
-Reini Urban <rurban@cpan.org> since 2008.
+Malcolm Beattie C<MICB at cpan.org> I<(retired)>,
+Reini Urban C<perl-compiler@googlegroups.com> since 2008.
 
 =cut
 

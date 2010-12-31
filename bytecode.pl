@@ -42,7 +42,7 @@ my $c_header = <<"EOT";
 /* -*- buffer-read-only: t -*-
  *
  *      Copyright (c) 1996-1999 Malcolm Beattie
- *      Copyright (c) 2008,2009 Reini Urban
+ *      Copyright (c) 2008,2009,2010 Reini Urban
  *
  *      You may distribute under the terms of either the GNU General Public
  *      License or the Artistic License, as specified in the README file.
@@ -80,8 +80,14 @@ if ($] > 5.009) {
 
 use B qw(@optype @specialsv_name);
 ';
-} else {
+} elsif ($] > 5.008) {
     print ASMDATA_PM 'our(%insn_data, @insn_name, @optype, @specialsv_name);
+
+@optype = qw(OP UNOP BINOP LOGOP LISTOP PMOP SVOP PADOP PVOP LOOP COP);
+@specialsv_name = qw(Nullsv &PL_sv_undef &PL_sv_yes &PL_sv_no pWARN_ALL pWARN_NONE);
+';
+} else {
+    print ASMDATA_PM 'my(%insn_data, @insn_name, @optype, @specialsv_name);
 
 @optype = qw(OP UNOP BINOP LOGOP LISTOP PMOP SVOP PADOP PVOP LOOP COP);
 @specialsv_name = qw(Nullsv &PL_sv_undef &PL_sv_yes &PL_sv_no pWARN_ALL pWARN_NONE);
@@ -315,57 +321,57 @@ $insn_num = 0;
 my @data = <DATA>;
 my @insndata = ();
 for (@data) {
-  if (/^\s*#/) {
-    print BYTERUN_C if /^\s*#\s*(?:if|endif|el)/;
-    next;
-  }
-  chop;
-  next unless length;
-  ($idx, $ver, $insn, $lvalue, $argtype, $flags) = split;
-  # bc numbering policy: <=5.6: leave out (squeeze), >=5.8 leave holes
-  if ($] > 5.007) {
-    $insn_num = $idx ? $idx : $insn_num;
-    $insn_num = 0 if !$idx and $insn eq 'ret';
-  } else { # ignore the idx and count through. just fixup comment and nop
-    $insn_num = 35 if $insn eq "comment";
-    $insn_num = 10 if $insn eq "nop";
-    $insn_num = 0  if $insn eq "ret"; # start from 0
-  }
-  my $rvalcast = '';
-  $unsupp = 0;
-  if ($argtype =~ m:(.+)/(.+):) {
-    ($rvalcast, $argtype) = ("($1)", $2);
-  }
-  if ($ver) {
-    if ($ver =~ /^\!?i/) {
-      $unsupp++ if ($ver =~ /^i/ and !$ithreads) or ($ver =~ /\!i/ and $ithreads);
-      $ver =~ s/^\!?i//;
+    if (/^\s*#/) {
+	print BYTERUN_C if /^\s*#\s*(?:if|endif|el)/;
+	next;
     }
-    # perl version 5.010000 => 10.000, 5.009003 => 9.003
-    # Have to round the float: 5.010 - 5 = 0.00999999999999979
-    my $pver = 0.0+(substr($],2,3).".".substr($],5));
-    if ($ver =~ /8(\-)?/) {
-      $ver =~ s/8/8.001/; # as convenience for a shorter table.
+    chop;
+    next unless length;
+    ($idx, $ver, $insn, $lvalue, $argtype, $flags) = split;
+    # bc numbering policy: <=5.6: leave out (squeeze), >=5.8 leave holes
+    if ($] > 5.007) {
+	$insn_num = $idx ? $idx : $insn_num;
+	$insn_num = 0 if !$idx and $insn eq 'ret';
+    } else { # ignore the idx and count through. just fixup comment and nop
+	$insn_num = 35 if $insn eq "comment";
+	$insn_num = 10 if $insn eq "nop";
+	$insn_num = 0  if $insn eq "ret"; # start from 0
     }
-    # Add these misses to ASMDATA. TODO: To BYTERUN maybe with a translator, as the
-    # perl fields to write to are gone. Reading for the disassembler should be possible.
-    if ($ver =~ /^\>[\d\.]+$/) {
-      $unsupp++ if $pver < substr($ver,1);# ver >10: skip if pvar lowereq 10
-    } elsif ($ver =~ /^\<[\d\.]+$/) {
-      $unsupp++ if $pver >= substr($ver,1); # ver <10: skip if pvar higher than 10;
-    } elsif ($ver =~ /^([\d\.]+)-([\d\.]+)$/) {
-      $unsupp++ if $pver >= $2 or $pver < $1; # ver 8-10 (both inclusive): skip if pvar
-      # lower than 8 or higher than 10;
-    } elsif ($ver =~ /^[\d\.]*$/) {
-      $unsupp++ if $pver < $ver; # ver 10: skip if pvar lower than 10;
+    my $rvalcast = '';
+    $unsupp = 0;
+    if ($argtype =~ m:(.+)/(.+):) {
+	($rvalcast, $argtype) = ("($1)", $2);
     }
-  }
-  if (!$unsupp or $] >= 5.007) {
-    $insn_name[$insn_num] = $insn;
-    push @insndata, [$insn_num, $unsupp, $insn, $lvalue, $rvalcast, $argtype, $flags];
-    # Find the next unused instruction number
-    do { $insn_num++ } while $insn_name[$insn_num];
-  }
+    if ($ver) {
+	if ($ver =~ /^\!?i/) {
+	    $unsupp++ if ($ver =~ /^i/ and !$ithreads) or ($ver =~ /\!i/ and $ithreads);
+	    $ver =~ s/^\!?i//;
+	}
+	# perl version 5.010000 => 10.000, 5.009003 => 9.003
+	# Have to round the float: 5.010 - 5 = 0.00999999999999979
+	my $pver = 0.0+(substr($],2,3).".".substr($],5));
+	if ($ver =~ /8(\-)?/) {
+	    $ver =~ s/8/8.001/; # as convenience for a shorter table.
+	}
+	# Add these misses to ASMDATA. TODO: To BYTERUN maybe with a translator, as the
+	# perl fields to write to are gone. Reading for the disassembler should be possible.
+	if ($ver =~ /^\>[\d\.]+$/) {
+	    $unsupp++ if $pver < substr($ver,1);# ver >10: skip if pvar lowereq 10
+	} elsif ($ver =~ /^\<[\d\.]+$/) {
+	    $unsupp++ if $pver >= substr($ver,1); # ver <10: skip if pvar higher than 10;
+	} elsif ($ver =~ /^([\d\.]+)-([\d\.]+)$/) {
+	    $unsupp++ if $pver >= $2 or $pver < $1; # ver 8-10 (both inclusive): skip if pvar
+	    # lower than 8 or higher than 10;
+	} elsif ($ver =~ /^[\d\.]*$/) {
+	    $unsupp++ if $pver < $ver; # ver 10: skip if pvar lower than 10;
+	}
+    }
+    if (!$unsupp or $] >= 5.007) {
+	$insn_name[$insn_num] = $insn;
+	push @insndata, [$insn_num, $unsupp, $insn, $lvalue, $rvalcast, $argtype, $flags];
+	# Find the next unused instruction number
+	do { $insn_num++ } while $insn_name[$insn_num];
+    }
 }
 
 # calculate holes and insn_nums (number of instructions per bytecode)
@@ -374,9 +380,9 @@ my $insn_max = $insndata[$#insndata]->[0];
 # %holes = (46=>1,66=>1,68=>1,107=>1,108=>1,115=>1,126=>1,127=>1,129=>1,131=>1) if $] > 5.007;
 my %insn_nums;
 if ($] > 5.007) {
-  my %unsupps;
-  for (@insndata) { $insn_nums{$_->[0]}++; } # all
-  for (@insndata) { $holes{$_->[0]}++ if $_->[1] and $insn_nums{$_->[0]} == 1; }
+    my %unsupps;
+    for (@insndata) { $insn_nums{$_->[0]}++; } # all
+    for (@insndata) { $holes{$_->[0]}++ if $_->[1] and $insn_nums{$_->[0]} == 1; }
 }
 
 for (@insndata) {
@@ -401,59 +407,73 @@ EOT
     #
     # On unsupported codes add to BYTERUN CASE only for certain nums: holes.
     if (!$unsupp or $holes{$insn_num}) {
-      printf BYTERUN_C "\t  case %s:\t\t/* %d */\n\t    {\n",
-	$unsupp ? $insn_num : "INSN_".uc($insn), $insn_num;
+	printf BYTERUN_C "\t  case %s:\t\t/* %d */\n\t    {\n",
+	  $unsupp ? $insn_num : "INSN_".uc($insn), $insn_num;
     } else {
-      next;
+	next;
     }
     my $optarg = $argtype eq "none" ? "" : ", arg";
-    if ($optarg) {
-      print BYTERUN_C "\t\t$argtype arg;\n";
-      if ($unsupp and $holes{$insn_num}) {
-          printf BYTERUN_C "\t\tPerlIO_printf(Perl_error_log, \"Unsupported bytecode instruction %%d (%s) at stream offset %%d.\\n\",
-	                                  insn, bstate->bs_fdata->next_out);\n", uc($insn);
-      }
-      print BYTERUN_C "\t\tif (force)\n\t" if $unsupp;
-      if ($fundtype eq 'strconst') {
-	my $maxsize = ($flags =~ /(\d+$)/) ? $1 : 0;
-	printf BYTERUN_C "\t\tBGET_%s(arg, %d);\n", $fundtype, $maxsize;
-      } else {
-	printf BYTERUN_C "\t\tBGET_%s(arg);\n", $fundtype;
-      }
-      printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"(insn %%3d) $insn $argtype:%s\\n\", insn, arg%s));\n",
-	$fundtype =~ /(strconst|pvcontents)/ ? '\"%s\"' : ($argtype =~ /index$/ ? '0x%x, ix:%d' : '%d'),
-	($argtype =~ /index$/ ? ', ix' : '');
-      if ($insn eq 'newopx' or $insn eq 'newop') {
-        printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   [%%s]\\n\", PL_op_name[arg>>7]));\n",
-      }
-      if ($fundtype eq 'PV') {
-	 print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BGET_PV(arg) => \\\"%s\\\"\\n\", bstate->bs_pv.xpv_pv));\n";
-      }
+    my ($argfmt, $rvaldcast);
+    if ($fundtype =~ /(strconst|pvcontents|op_tr_array)/) {
+	$argfmt = '\"%s\"';
+	$rvaldcast = '(char*)';
+    } elsif ($argtype =~ /index$/) {
+	$argfmt = '0x%x, ix:%d';
+	$rvaldcast = "($argtype)";
     } else {
-      if ($unsupp and $holes{$insn_num}) {
-          printf BYTERUN_C "\t\tPerlIO_printf(Perl_error_log, \"Unsupported bytecode instruction %%d (%s) at stream offset %%d.\\n\",
+	$argfmt = '%d';
+	$rvaldcast = '(int)';
+    }
+    if ($optarg) {
+	print BYTERUN_C "\t\t$argtype arg;\n";
+	if ($rvalcast) {
+	    $argtype = $rvalcast . $argtype;
+	}
+	if ($unsupp and $holes{$insn_num}) {
+	    printf BYTERUN_C "\t\tPerlIO_printf(Perl_error_log, \"Unsupported bytecode instruction %%d (%s) at stream offset %%d.\\n\",
 	                                  insn, bstate->bs_fdata->next_out);\n", uc($insn);
-      }
-      print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"(insn %3d) $insn\\n\", insn));\n";
+	}
+	print BYTERUN_C "\t\tif (force)\n\t" if $unsupp;
+	if ($fundtype eq 'strconst') {
+	    my $maxsize = ($flags =~ /(\d+$)/) ? $1 : 0;
+	    printf BYTERUN_C "\t\tBGET_%s(arg, %d);\n", $fundtype, $maxsize;
+	} else {
+	    printf BYTERUN_C "\t\tBGET_%s(arg);\n", $fundtype;
+	}
+	printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"(insn %%3d) $insn $argtype:%s\\n\", insn, ${rvaldcast}arg%s));\n",
+	  $argfmt, ($argtype =~ /index$/ ? ', (int)ix' : '');
+	if ($insn eq 'newopx' or $insn eq 'newop') {
+	    print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   [%s]\\n\", PL_op_name[arg>>7]));\n";
+	}
+	if ($fundtype eq 'PV') {
+	    print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BGET_PV(arg) => \\\"%s\\\"\\n\", bstate->bs_pv.xpv_pv));\n";
+	}
+    } else {
+	if ($unsupp and $holes{$insn_num}) {
+	    printf BYTERUN_C "\t\tPerlIO_printf(Perl_error_log, \"Unsupported bytecode instruction %%d (%s) at stream offset %%d.\\n\",
+	                                  insn, bstate->bs_fdata->next_out);\n", uc($insn);
+	}
+	print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"(insn %3d) $insn\\n\", insn));\n";
     }
     if ($flags =~ /x/) {
-      # Special setter method named after insn
-      print BYTERUN_C "\t\tif (force)\n\t" if $unsupp;
-      print BYTERUN_C "\t\tBSET_$insn($lvalue$optarg);\n";
-      printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BSET_$insn($lvalue%s)\\n\"$optarg));\n",
-	$optarg eq ", arg"
-	  ? ($fundtype =~ /(strconst|pvcontents)/ ? ', \"%s\"' : ($argtype =~ /index$/ ? ', 0x%x' : ', %d'))
-	  : '';
+	# Special setter method named after insn
+	print BYTERUN_C "\t\tif (force)\n\t" if $unsupp;
+	print BYTERUN_C "\t\tBSET_$insn($lvalue$optarg);\n";
+	my $optargcast = $optarg eq ", arg" ? ", ${rvaldcast}arg" : '';
+	printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BSET_$insn($lvalue%s)\\n\"$optargcast));\n",
+	  $optarg eq ", arg"
+	    ? ($fundtype =~ /(strconst|pvcontents)/ ? ', \"%s\"' : ", ".($argtype =~ /index$/ ? '0x%x' : $argfmt))
+	      : '';
     } elsif ($flags =~ /s/) {
-      # Store instructions to bytecode_obj_list[arg]. "lvalue" field is rvalue.
-      print BYTERUN_C "\t\tif (force)\n\t" if $unsupp;
-      print BYTERUN_C "\t\tBSET_OBJ_STORE($lvalue$optarg);\n";
-      print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BSET_OBJ_STORE($lvalue$optarg)\\n\"));\n";
+	# Store instructions to bytecode_obj_list[arg]. "lvalue" field is rvalue.
+	print BYTERUN_C "\t\tif (force)\n\t" if $unsupp;
+	print BYTERUN_C "\t\tBSET_OBJ_STORE($lvalue$optarg);\n";
+	print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BSET_OBJ_STORE($lvalue$optarg)\\n\"));\n";
     }
     elsif ($optarg && $lvalue ne "none") {
-      print BYTERUN_C "\t\t$lvalue = ${rvalcast}arg;\n" unless $unsupp;
-      printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   $lvalue = ${rvalcast}%s;\\n\", arg%s));\n",
-	$fundtype =~ /(strconst|pvcontents)/ ? '\"%s\"' : ($argtype =~ /index$/ ? '0x%x' : '%d');
+	print BYTERUN_C "\t\t$lvalue = ${rvalcast}arg;\n" unless $unsupp;
+	printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   $lvalue = ${rvalcast}%s;\\n\", ${rvaldcast}arg%s));\n",
+	  $fundtype =~ /(strconst|pvcontents)/ ? '\"%s\"' : ($argtype =~ /index$/ ? '0x%x' : $argfmt);
     }
     print BYTERUN_C "\t\tbreak;\n\t    }\n";
 }
@@ -767,9 +787,8 @@ ops, like xiv64, cop_arybase.
 
 =head1 AUTHOR
 
-Malcolm Beattie, C<mbeattie@sable.ox.ac.uk>
-
-Reini Urban added the version logic, 5.10 support, portability.
+Malcolm Beattie C<MICB at cpan.org> I<(retired)>,
+Reini Urban added the version logic, support >= 5.10, portability.
 
 =cut
 
@@ -863,7 +882,8 @@ __END__
 47 0 	xio_type	IoTYPE(bstate->bs_sv)		char
 48 0 	xio_flags	IoFLAGS(bstate->bs_sv)		char
 49 8 	xcv_xsubany	*(SV**)&CvXSUBANY(bstate->bs_sv).any_ptr svindex
-50 0 	xcv_stash	*(SV**)&CvSTASH(bstate->bs_sv)	svindex
+50 <13	xcv_stash	CvSTASH(bstate->bs_sv)		svindex
+50 13	xcv_stash	bstate->bs_sv			svindex		x
 51 0 	xcv_start	CvSTART(bstate->bs_sv)		opindex
 52 0 	xcv_root	CvROOT(bstate->bs_sv)		opindex
 53 0 	xcv_gv		bstate->bs_sv			svindex		x
@@ -940,7 +960,7 @@ __END__
 110 !i10   op_pmstash	*(SV**)&(cPMOP->op_pmstashstartu).op_pmreplstart svindex
 111 !i10   op_pmreplrootgv *(SV**)&(cPMOP->op_pmreplrootu).op_pmreplroot svindex
 112 0   pregcomp	PL_op				pvcontents	x
-113 0   op_pmflags	cPMOP->op_pmflags		U16
+113 0   op_pmflags	cPMOP->op_pmflags		pmflags		x
 114 <10 op_pmpermflags  cPMOP->op_pmpermflags		U16
 115 8-10 op_pmdynflags   cPMOP->op_pmdynflags		U8
 116 0 	op_sv		cSVOP->op_sv			svindex
@@ -988,3 +1008,4 @@ __END__
 154 11  op_reflags  	RX_EXTFLAGS(PM_GETRE(cPMOP))	U32
 155 10 	cop_seq_low	((XPVNV*)(SvANY(bstate->bs_sv)))->xnv_u.xpad_cop_seq.xlow  U32
 156 10	cop_seq_high	((XPVNV*)(SvANY(bstate->bs_sv)))->xnv_u.xpad_cop_seq.xhigh U32
+157 8	gv_fetchpvn_flags bstate->bs_sv			U32		x

@@ -1,7 +1,7 @@
 # B::Bytecode.pm
 # Copyright (c) 1994-1999 Malcolm Beattie. All rights reserved.
 # Copyright (c) 2003 Enache Adrian. All rights reserved.
-# Copyright (c) 2008,2009 Reini Urban <rurban@cpan.org>. All rights reserved.
+# Copyright (c) 2008,2009,2010 Reini Urban <rurban@cpan.org>. All rights reserved.
 # This module is free software; you can redistribute and/or modify
 # it under the same terms as Perl itself.
 
@@ -13,7 +13,7 @@
 
 package B::Bytecode;
 
-our $VERSION = '1.08';
+our $VERSION = '1.09';
 
 #use 5.008;
 use B qw(class main_cv main_root main_start
@@ -51,13 +51,14 @@ my $PERL56  = ( $] <  5.008001 );
 my $PERL510 = ( $] >= 5.009005 );
 my $PERL511 = ( $] >= 5.011 );
 my $PERL513 = ( $] >= 5.013002 );
-our ($quiet);
-my ( $varix, $opix, $savebegins, %walked, %files, @cloop, %debug );
+my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
+our ($quiet, %debug);
+my ( $varix, $opix, $savebegins, %walked, %files, @cloop );
 my %strtab  = ( 0, 0 );
 my %svtab   = ( 0, 0 );
 my %optab   = ( 0, 0 );
 my %spectab = $PERL56 ? () : ( 0, 0 ); # we need the special Nullsv on 5.6 (?)
-my $tix      = $PERL56 ? 0 : 1;
+my $tix     = $PERL56 ? 0 : 1;
 my %ops     = ( 0, 0 );
 my @packages;    # list of packages to compile. 5.6 only
 
@@ -65,9 +66,10 @@ my @packages;    # list of packages to compile. 5.6 only
 sub nice ($) { }
 
 my %optype_enum;
-my ($SVt_PVGV, $SVf_FAKE, $POK);
+my ($SVt_PV, $SVt_PVGV, $SVf_FAKE, $POK);
 if ($PERL56) {
   sub dowarn {};
+  $SVt_PV = 4;
   $SVt_PVGV = 13;
   $SVf_FAKE = 0x00100000;
   $POK = 0x00040000 | 0x04000000;
@@ -77,6 +79,7 @@ if ($PERL56) {
   sub MAGICAL56 { $_[0]->FLAGS & 0x000E000 } #(SVs_GMG|SVs_SMG|SVs_RMG)
 } else {
   no strict 'subs';
+  $SVt_PV = 4;
   $SVt_PVGV = SVt_PVGV;
   $SVf_FAKE = SVf_FAKE;
 }
@@ -148,8 +151,36 @@ sub B::OP::ix {
   defined($ix) ? $ix : do {
     nice "[" . $op->name . " $tix]";
     $ops{$tix} = $op;
+    # Note: This left-shift 7 encoding of the optype has nothing to do with OCSHIFT in opcode.pl
+    # The counterpart is hardcoded in Byteloader/bytecode.h: BSET_newopx
     my $arg = $PERL56 ? $optype_enum{class($op)} : $op->size | $op->type << 7;
     my $opsize = $PERL56 ? '?' : $op->size;
+    if (ref($op) eq 'B::OP') { # check wrong BASEOPs
+      # [perl #80622] Introducing the entrytry hack, needed since 5.12, fixed with 5.13.8 a425677
+      #   ck_eval upgrades the UNOP entertry to a LOGOP, but B gets us just a B::OP (BASEOP).
+      #   op->other points to the leavetry op, which is needed for the eval scope.
+      if ($op->name eq 'entertry') {
+	$opsize = $op->size + (2*$Config{ptrsize});
+	$arg = $PERL56 ? $optype_enum{LOGOP} : $opsize | $op->type << 7;
+	# "make entertry LISTOP" patch in consideration
+	# bless $op, $] > 5.013007 ? 'B::LISTOP' : 'B::LOGOP';
+        warn "[perl #80622] Upgrading entertry from BASEOP to LOGOP...\n";
+        bless $op, 'B::LOGOP';
+      } elsif ($DEBUGGING) { # only needed when we have to check for new wrong BASEOP's
+	if (eval "require Opcodes;") {
+	  my $class = Opcodes::opclass($op->type);
+	  if ($class > 0) {
+	    my $classname = $optype[$class];
+            warn "Upgrading entertry {$op->name} BASEOP to $classname...\n";
+	    bless $op, "B::".$classname if $classname;
+	  }
+	} else {
+          # 5.10 only
+	  my %baseops = map { $_ => 1} qw(3 184 2 5 6 7 8 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127 128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143 144 145 146 147 148 149 150 151 152 153 154 155 156 157 158 159 160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175 176 177 178 181 182 183 185 186 187 188 189 190 191 192 193 194 195 196 197 198 199 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223 224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255 256 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272 273 274 275 276 277 278 279 280 281 282 283 284 285 286 287 288 289 290 291 292 295 296 297 298 300 301 302 303 306 307 308 309 310 311 312 313 314 315 316 317 318 319 320 321 322 323 324 325 326 327 328 330 331 333 334 336 337 339 340 341 342 347 348 352 353 358 359 360);
+	  warn "unknown OP class for ".$op->name."\n" unless $baseops{$op->type};
+	}
+      }
+    }
     B::Assembler::maxopix($tix) if $debug{A};
     asm "newopx", $arg, sprintf( "$arg=size:%s,type:%d", $opsize, $op->type );
     asm "stop", $tix if $PERL56;
@@ -415,6 +446,7 @@ sub B::PVNV::bsave {
   my ( $sv, $ix ) = @_;
   $sv->B::PVIV::bsave($ix);
   if ($PERL510) {
+    # getting back to PVMG
     return if $sv->isa('B::AV');
     return if $sv->isa('B::HV');
     return if $sv->isa('B::CV');
@@ -515,7 +547,7 @@ sub B::IO::bsave {
 sub B::CV::bsave {
   my ( $cv, $ix ) = @_;
   my $stashix   = $cv->STASH->ix;
-  my $gvix = $cv->GV->ix;
+  my $gvix      = $cv->GV->ix;
   my $padlistix = $cv->PADLIST->ix;
   my $outsideix = $cv->OUTSIDE->ix;
   my $startix   = $cv->START->opwalk;
@@ -528,13 +560,13 @@ sub B::CV::bsave {
   unless ($PERL56) {
     asm "xcv_xsubany",   $cv->CONST ? $cv->XSUBANY->ix : 0;
   }
-  asm "xcv_gv",          $gvix;
-  asm "xcv_file",        pvix $cv->FILE if $cv->FILE;    # XXX AD
   asm "xcv_padlist",     $padlistix;
   asm "xcv_outside",     $outsideix;
-  asm "xcv_flags",       $cv->CvFLAGS;
   asm "xcv_outside_seq", $cv->OUTSIDE_SEQ unless $PERL56;
   asm "xcv_depth",       $cv->DEPTH;
+  asm "xcv_flags",       $cv->CvFLAGS;
+  asm "xcv_gv",          $gvix;
+  asm "xcv_file",        pvix $cv->FILE if $cv->FILE;    # XXX AD
 }
 
 sub B::FM::bsave {
@@ -585,6 +617,7 @@ sub B::GV::desired {
     eval "require B::Debug;";
     $gv->debug;
   }
+  #unless ($] > 5.013005 and $hv->NAME eq 'B')
   $files{ $gv->FILE } && $gv->LINE
     || ${ $cv   = $gv->CV }   && $files{ $cv->FILE }
     || ${ $form = $gv->FORM } && $files{ $form->FILE };
@@ -600,11 +633,27 @@ sub B::HV::bwalk {
       if ( $$hash && $hash->NAME ) {
         $hash->bwalk;
       }
-      $v->ix(1) if desired $v;
+      # B since 5.13.6 (744aaba0598) pollutes our namespace. Keep it clean
+      # XXX This fails if our source really needs any B constant
+      unless ($] > 5.013005 and $hv->NAME eq 'B') {
+	$v->ix(1) if desired $v;
+      }
     }
     else {
+      if ($] > 5.013005 and $hv->NAME eq 'B') { # see above. omit B prototypes
+	return;
+      }
       nice "[prototype]";
-      asm "gv_fetchpvx", cstring $hv->NAME . "::$k";
+      # XXX when? do not init empty prototypes. But only 64-bit fails.
+      if ($PERL510 and $v->SvTYPE == $SVt_PVGV) {
+	asm "newpv", cstring $hv->NAME . "::$k";
+	# Beware of special gv_fetchpv GV_* flags.
+	# gv_fetchpvx uses only GV_ADD, which fails e.g. with *Fcntl::O_SHLOCK,
+	# if "Your vendor has not defined Fcntl macro O_SHLOCK"
+	asm "gv_fetchpvn_flags", 0x20; 	# GV_NOADD_NOINIT
+      } else {
+	asm "gv_fetchpvx", cstring $hv->NAME . "::$k";
+      }
       $svtab{$$v} = $varix = $tix;
       # we need the sv_flags before, esp. for DEBUGGING asserts
       asm "sv_flags",  $v->FLAGS;
@@ -766,7 +815,7 @@ sub B::PMOP::bsave {
   my ( $rrop, $rrarg, $rstart );
 
   # my $pmnextix = $op->pmnext->ix;	# XXX
-  bwarn( B::peekop($op), ", ix: $ix" ) if $debug{M} or $debug{o};
+  bwarn( B::peekop($op), " ix: $ix" ) if $debug{M} or $debug{o};
   if (ITHREADS) {
     if ( $op->name eq 'subst' ) {
       $rrop   = "op_pmreplroot";
@@ -825,10 +874,9 @@ sub B::PMOP::bsave {
     asm "pregcomp";
   }
   elsif ($PERL510) {
+    # Since PMf_BASE_SHIFT we need a U32, which is a new bytecode for backwards compat
     asm "op_pmflags", $op->pmflags;
-    bwarn("PMOP pmstashpv: ", $op->pmstashpv,
-          ", op_pmflags: ", $op->pmflags
-         ) if $debug{M};
+    bwarn("PMOP op_pmflags: ", $op->pmflags) if $debug{M};
     my $pv = $op->precomp;
     asm "newpv", pvstring $pv;
     asm "pregcomp";
@@ -916,6 +964,7 @@ sub B::OP::opwalk {
       ? () : $op->oplist; # 5.6 may be called by a COP
     push @cloop, undef;
     $ix = $_->ix while $_ = pop @oplist;
+    print "\n# rest of cloop\n";
     while ( $_ = pop @cloop ) {
       asm "ldop",    $optab{$$_};
       asm "op_next", $optab{ ${ $_->next } };
@@ -939,6 +988,13 @@ sub save_cq {
 
         # XXX BEGIN { goto A while 1; A: }
         for ( my $op = $_->START ; $$op ; $op = $op->next ) {
+	  # special cases for:
+	  # 1. push|unshift @INC, "libpath"
+	  if ($op->name =~ /^(unshift|push)$/) {
+	    asm "push_begin", $_->ix;
+	    last;
+	  }
+	  # 2. use|require ... unless in tests
           next unless $op->name eq 'require' ||
 
               # this kludge needed for tests
@@ -991,7 +1047,7 @@ sub symwalk {
     walksymtable( \%{"$_[0]"}, "desired", \&symwalk, $_[0] );
   }
   warn "considering $_[0] ... " . ( $ok ? "accepted\n" : "rejected\n" )
-    if $debug{bc};
+    if $debug{b};
   $ok;
 }
 
@@ -1117,7 +1173,7 @@ use ByteLoader '$ByteLoader::VERSION';
       walkoptree( main_root, "bsave" ) unless ref(main_root) eq "B::NULL";
     }
     asm "main_start", $PERL56 ? main_start->ix : main_start->opwalk;
-    asm "main_start", main_start->opwalk;
+    #asm "main_start", main_start->opwalk;
     asm "main_root",  main_root->ix;
     asm "main_cv",    main_cv->ix;
     asm "curpad",     ( comppadlist->ARRAY )[1]->ix;
@@ -1180,8 +1236,11 @@ Prepend a C<use ByteLoader VERSION;> line to the produced bytecode.
 
 =item B<-b>
 
-Save all the BEGIN blocks. Normally only BEGIN blocks that C<require>
-other files (ex. C<use Foo;>) are saved.
+Save all the BEGIN blocks.
+
+Normally only BEGIN blocks that C<require>
+other files (ex. C<use Foo;>) or push|unshift
+to @INC are saved.
 
 =item B<-k>
 
@@ -1216,7 +1275,7 @@ Be verbose.
 
 =item B<-TI>
 
-Restore @INC for running within the CORE testsuite.
+Restore full @INC for running within the CORE testsuite.
 
 =item B<-TF> I<cop file>
 
@@ -1281,7 +1340,7 @@ THIS CODE IS HIGHLY EXPERIMENTAL. USE AT YOUR OWN RISK.
 
 =head1 AUTHORS
 
-Originally written by Malcolm Beattie <mbeattie@sable.ox.ac.uk> and
+Originally written by Malcolm Beattie and
 modified by Benjamin Stuhl <sho_pi@hotmail.com>.
 
 Rewritten by Enache Adrian <enache@rdslink.ro>, 2003 a.d.

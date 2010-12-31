@@ -59,6 +59,14 @@ sub invalidate {
   shift->{flags} &= ~( VALID_INT | VALID_UNSIGNED | VALID_DOUBLE );
 }
 
+sub invalidate_int {
+  shift->{flags} &= ~( VALID_INT | VALID_UNSIGNED );
+}
+
+sub invalidate_double {
+  shift->{flags} &= ~( VALID_DOUBLE );
+}
+
 sub as_sv {
   my $obj = shift;
   if ( !( $obj->{flags} & VALID_SV ) ) {
@@ -391,7 +399,9 @@ const, but also GV,CV,RV,AV,HV use B::Stackobj::Const.
 
 =head1 AUTHOR
 
-Malcolm Beattie, C<mbeattie@sable.ox.ac.uk>
+Malcolm Beattie C<MICB at cpan.org> I<(retired)>,
+Reini Urban C<perl-compiler@googlegroups.com>.
+
 
 =cut
 

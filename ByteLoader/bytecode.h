@@ -8,6 +8,12 @@ typedef OP *opindex;
 typedef char *pvindex;
 /*typedef HEK *hekindex;*/
 typedef IV IV64;
+#if PERL_VERSION < 13
+typedef U16 pmflags;
+#else
+typedef U32 pmflags;
+#endif
+
 
 static int force = 0;
 /* need to swab bytes to the target byteorder */
@@ -179,6 +185,18 @@ static int bget_swab = 0;
 	BGET_objindex(arg, pvindex);			\
 	arg = arg ? savepv(arg) : arg;			\
     } STMT_END
+/* old bytecode compiler only had U16, new reads U32 since 5.13 */
+#define BGET_pmflags(arg) STMT_START {			\
+        if (strncmp(bl_header.version,"0.07",4)>=0) {	\
+	  if (strncmp(bl_header.perlversion,"5.013",5)>=0) {	\
+		BGET_U32(arg);				\
+	    } else {					\
+		BGET_U16(arg);				\
+	    }						\
+        } else {					\
+            BGET_U16(arg);				\
+	}						\
+  } STMT_END
 
 #define BSET_ldspecsv(sv, arg) STMT_START {				\
 	if(arg >= sizeof(specialsv_list) / sizeof(specialsv_list[0])) {	\
@@ -204,13 +222,18 @@ static int bget_swab = 0;
 	GvGP(sv) = GvGP(arg);			\
     } STMT_END
 
-#define BSET_gv_fetchpv(sv, arg)	sv = (SV*)gv_fetchpv(arg, TRUE, SVt_PV)
+#define BSET_gv_fetchpv(sv, arg)	sv = (SV*)gv_fetchpv(arg, GV_ADD, SVt_PV)
 #define BSET_gv_fetchpvx(sv, arg) STMT_START {	\
 	BSET_gv_fetchpv(sv, arg);		\
 	BSET_OBJ_STOREX(sv);			\
     } STMT_END
+#define BSET_gv_fetchpvn_flags(sv, arg) STMT_START {	 \
+        int flags = (arg & 0xff00) >> 16; int type = arg & 0xff; \
+	sv = (SV*)gv_fetchpv(bstate->bs_pv.xpv_pv, flags, type); \
+	BSET_OBJ_STOREX(sv);				 \
+    } STMT_END
 
-#define BSET_gv_stashpv(sv, arg)	sv = (SV*)gv_stashpv(arg, TRUE)
+#define BSET_gv_stashpv(sv, arg)	sv = (SV*)gv_stashpv(arg, GV_ADD)
 #define BSET_gv_stashpvx(sv, arg) STMT_START {	\
 	BSET_gv_stashpv(sv, arg);		\
 	BSET_OBJ_STOREX(sv);			\
@@ -243,10 +266,15 @@ static int bget_swab = 0;
 	hv_store((HV*)sv, bstate->bs_pv.xpv_pv, bstate->bs_pv.xpv_cur, arg, 0)
 #define BSET_pv_free(pv)	Safefree(pv.xpv_pv)
 
-#if (PERL_VERSION > 13 || ((PERL_VERSION == 13) && (PERL_SUBVERSION >= 3)))
-#define BSET_xcv_gv(sv, arg)	(CvGV_set((CV*)bstate->bs_sv, (GV*)arg))
+#if PERL_VERSION > 13 || defined(CvGV_set)
+#define BSET_xcv_gv(sv, arg)	((SvANY((CV*)bstate->bs_sv))->xcv_gv = (GV*)arg)
 #else
 #define BSET_xcv_gv(sv, arg)	(*(SV**)&CvGV(bstate->bs_sv) = arg)
+#endif
+#if PERL_VERSION > 13 || defined(CvSTASH_set)
+#define BSET_xcv_stash(sv, arg)	(CvSTASH_set((CV*)bstate->bs_sv, (HV*)arg))
+#else
+#define BSET_xcv_stash(sv, arg)	(*(SV**)&CvSTASH(bstate->bs_sv) = arg)
 #endif
 
 #ifdef USE_ITHREADS
@@ -371,7 +399,7 @@ static int bget_swab = 0;
 	BSET_newop(newop, size);		\
 	/* newop->op_next = o; XXX */		\
 	o = newop;				\
-	arg >>=7;				\
+	arg >>= 7;				\
 	BSET_op_type(o, arg);			\
 	BSET_OBJ_STOREX(o);			\
     } STMT_END
@@ -414,7 +442,7 @@ static int bget_swab = 0;
 	char *pname = "main";						\
 	if (arg == 'D')							\
 	    pname = HvNAME(PL_curstash ? PL_curstash : PL_defstash);	\
-	gv = gv_fetchpv(Perl_form(aTHX_ "%s::DATA", pname), TRUE, SVt_PVIO);\
+	gv = gv_fetchpv(Perl_form(aTHX_ "%s::DATA", pname), GV_ADD, SVt_PVIO);\
 	GvMULTI_on(gv);							\
 	if (!GvIO(gv))							\
 	    GvIOp(gv) = newIO();					\
@@ -459,7 +487,7 @@ static int bget_swab = 0;
 #define BSET_op_ppaddr(o, arg) Perl_croak(aTHX_ "op_ppaddr not yet implemented")
 #define BSET_curpad(pad, arg) STMT_START {	\
 	PL_comppad = (AV *)arg;			\
-	pad = AvARRAY(arg);			\
+	PL_curpad = AvARRAY(arg);		\
     } STMT_END
 
 #ifdef USE_ITHREADS
@@ -478,11 +506,20 @@ static int bget_swab = 0;
 #define BSET_cop_stashpv(cop, arg)	Perl_warn(aTHX_ "cop_stashpv without ITHREADS not yet implemented")
 #endif
 #if PERL_VERSION < 11
-#define BSET_cop_label(cop, arg)	(cop)->cop_label = arg
+# define BSET_cop_label(cop, arg)	(cop)->cop_label = arg
 #else
 /* See op.c:Perl_newSTATEOP. Test 21 */
-#define BSET_cop_label(cop, arg)	(cop)->cop_hints_hash = \
+# if (PERL_VERSION < 13) || ((PERL_VERSION == 13) && (PERL_SUBVERSION < 5))
+#  if defined(_WIN32) || (defined(__CYGWIN__) && (__GNUC__ > 3)) || defined(AIX)
+#   define BSET_cop_label(cop, arg)      /* XXX not exported */
+#  else
+#   define BSET_cop_label(cop, arg)	(cop)->cop_hints_hash = \
         Perl_store_cop_label(aTHX_ (cop)->cop_hints_hash, arg)
+#  endif
+# else
+/* changed with 5.13.4-5 a77ac40c5b8 */
+#  define BSET_cop_label(cop, arg)	Perl_store_cop_label(aTHX_ (cop), arg, strlen(arg), 0)
+# endif
 #endif
 
 /* This is stolen from the code in newATTRSUB() */
@@ -540,7 +577,7 @@ static int bget_swab = 0;
             if (!PL_beginav)				\
                 PL_beginav = newAV();			\
             av_push(PL_beginav, (SV*)cv);		\
-	    GvCV(CvGV(cv)) = 0;               /* cv has been hijacked */\
+	    SvANY((CV*)cv)->xcv_gv = 0;/* cv has been hijacked */ \
             call_list(oldscope, PL_beginav);		\
             PL_curcop = &PL_compiling;			\
             CopHINTS_set(&PL_compiling, (U8)PL_HINTS_PRIVATE);	\
@@ -571,7 +608,7 @@ static int bget_swab = 0;
 	 bstate->bs_ix++)
 
 #define BSET_signal(cv, name)						\
-	mg_set(*hv_store(GvHV(gv_fetchpv("SIG", TRUE, SVt_PVHV)),	\
+	mg_set(*hv_store(GvHV(gv_fetchpv("SIG", GV_ADD, SVt_PVHV)),	\
 		name, strlen(name), cv, 0))
 /* 5.008? */
 #ifndef hv_name_set
@@ -632,6 +669,12 @@ static int bget_swab = 0;
 	} STMT_END
 # endif
 #endif
+
+/* old reading new + new reading old */
+#define BSET_op_pmflags(r, arg)	STMT_START {		\
+	r = arg;					\
+	} STMT_END
+
 
 /* NOTE: The bytecode header only sanity-checks the bytecode. If a script cares about
  * what version of Perl it's being called under, it should do a 'use 5.006_001' or

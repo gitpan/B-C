@@ -2,28 +2,32 @@
 #
 #      Copyright (c) 1996, 1997, 1998 Malcolm Beattie
 #      Copyright (c) 2009, 2010 Reini Urban
+#      Copyright (c) 2010 Heinz Knutzen
 #
 #      You may distribute under the terms of either the GNU General Public
 #      License or the Artistic License, as specified in the README file.
 #
 package B::CC;
 
-our $VERSION = '1.07';
+our $VERSION = '1.08';
 
 use Config;
 use strict;
 #use 5.008;
 use B qw(main_start main_root class comppadlist peekop svref_2object
   timing_info init_av sv_undef amagic_generation
-  OPf_WANT_LIST OPf_WANT OPf_MOD OPf_STACKED OPf_SPECIAL
+  OPf_WANT_VOID OPf_WANT_SCALAR OPf_WANT_LIST OPf_WANT
+  OPf_MOD OPf_STACKED OPf_SPECIAL
   OPpASSIGN_BACKWARDS OPpLVAL_INTRO OPpDEREF_AV OPpDEREF_HV
-  OPpDEREF OPpFLIP_LINENUM G_ARRAY G_SCALAR
+  OPpDEREF OPpFLIP_LINENUM G_VOID G_SCALAR G_ARRAY
 );
+#CXt_NULL CXt_SUB CXt_EVAL CXt_SUBST CXt_BLOCK
 use B::C qw(save_unused_subs objsym init_sections mark_unused
   output_all output_boilerplate output_main fixup_ppaddr save_sig
   svop_or_padop_pv);
 use B::Bblock qw(find_leaders);
 use B::Stackobj qw(:types :flags);
+use B::C::Flags;
 
 @B::OP::ISA = qw(B::NULLOP B);           # support -Do
 @B::LISTOP::ISA = qw(B::BINOP B);       # support -Do
@@ -48,6 +52,7 @@ my @pad;           # Lexicals in current pad as Stackobj-derived objects
 my @padlist;       # Copy of current padlist so PMOP repl code can find it
 my @cxstack;       # Shadows the (compile-time) cxstack for next,last,redo
 		    # This covers only a small part of the perl cxstack
+my $labels;         # hashref to array of op labels
 my %constobj;      # OP_CONST constants as Stackobj-derived objects
                     # keyed by $$sv.
 my $need_freetmps = 0;	# We may postpone FREETMPS to the end of each basic
@@ -67,7 +72,7 @@ my $package_pv;      # sv->pv of previous op for method_named
 my %lexstate;           #state of padsvs at the start of a bblock
 my $verbose;
 my ( $entertry_defined, $vivify_ref_defined );
-my ( $module_name, %debug );
+my ( $module_name, %debug, $strict );
 
 # Optimisation options. On the command line, use hyphens instead of
 # underscores for compatibility with gcc-style options. We use
@@ -91,27 +96,16 @@ my $PERL511    = ( $] >= 5.011 );
 
 my $SVt_PVLV = $PERL510 ? 10 : 9;
 my $SVt_PVAV = $PERL510 ? 11 : 10;
-
+# use sub qw(CXt_LOOP_PLAIN CXt_LOOP);
 if ($PERL511) {
-  sub CXt_NULL        { 0 }
-  sub CXt_SUB         { 8 }
-  sub CXt_EVAL        { 10 }
-  sub CXt_SUBST       { 11 }
-  sub CXt_BLOCK       { 2 }
-  sub CXt_LOOP_FOR    { 4 }
-  sub CXt_LOOP_PLAIN  { 5 }
-  sub CXt_LOOP_LAZYSV { 6 }
-  sub CXt_LOOP_LAZYIV { 7 }
-  sub CxTYPE_no_LOOP  { ( $_[0]->{type} < 4 or $_[0]->{type} > 7 ) }
+  sub CXt_LOOP_PLAIN {5} # CXt_LOOP_FOR CXt_LOOP_LAZYSV CXt_LOOP_LAZYIV
+} else {
+  sub CXt_LOOP {3}
 }
-else {
-  sub CXt_NULL       { 0 }
-  sub CXt_SUB        { 1 }
-  sub CXt_EVAL       { 2 }
-  sub CXt_LOOP       { 3 }
-  sub CXt_SUBST      { 4 }
-  sub CXt_BLOCK      { 5 }
-  sub CxTYPE_no_LOOP { $_[0]->{type} != 3 }
+sub CxTYPE_no_LOOP  {
+  $PERL511 
+    ? ( $_[0]->{type} < 4 or $_[0]->{type} > 7 )
+    : $_[0]->{type} != 3
 }
 
 # Could rewrite push_runtime() and output_runtime() to use a
@@ -135,8 +129,8 @@ sub init_hash {
 # XXX We should really take some of this info from Opcodes (was: CORE opcode.pl)
 #
 # no args and no return value = Opcodes::argnum 0
-%no_stack         = init_hash qw(pp_enter pp_unstack pp_leave
-  pp_break pp_continue pp_dbstate);
+%no_stack         = init_hash qw(pp_unstack pp_break pp_continue);
+				# pp_enter pp_leave, use/change global stack.
 #skip write_back_stack (no args)
 %skip_stack       = init_hash qw(pp_enter);
 %skip_lexicals   = init_hash qw(pp_enter pp_enterloop);
@@ -146,6 +140,14 @@ sub init_hash {
   pp_entertry pp_enterloop pp_enteriter pp_entersub pp_entergiven
   pp_enter pp_method);
 %ignore_op = init_hash qw(pp_scalar pp_regcmaybe pp_lineseq pp_scope pp_null);
+
+{ # block necessary for caller to work
+  my $caller = caller;
+  if ( $caller eq 'O' ) {
+    require XSLoader;
+    XSLoader::load('B::C'); # for r-magic only
+  }
+}
 
 sub debug {
   if ( $debug{runtime} ) {
@@ -246,6 +248,9 @@ sub output_runtime {
     print << '__EOV' if $vivify_ref_defined;
 
 /* Code to take a scalar and ready it to hold a reference */
+#  ifndef SVt_RV
+#    define SVt_RV   SVt_IV
+#  endif
 #  define prepare_SV_for_RV(sv)						\
     STMT_START {							\
 		    if (SvTYPE(sv) < SVt_RV)				\
@@ -260,8 +265,6 @@ sub output_runtime {
 void
 Perl_vivify_ref(pTHX_ SV *sv, U32 to_what)
 {
-    PERL_ARGS_ASSERT_VIVIFY_REF;
-
     SvGETMAGIC(sv);
     if (!SvOK(sv)) {
 	if (SvREADONLY(sv))
@@ -272,10 +275,10 @@ Perl_vivify_ref(pTHX_ SV *sv, U32 to_what)
 	    SvRV_set(sv, newSV(0));
 	    break;
 	case OPpDEREF_AV:
-	    SvRV_set(sv, MUTABLE_SV(newAV()));
+	    SvRV_set(sv, newAV());
 	    break;
 	case OPpDEREF_HV:
-	    SvRV_set(sv, MUTABLE_SV(newHV()));
+	    SvRV_set(sv, newHV());
 	    break;
 	}
 	SvROK_on(sv);
@@ -313,7 +316,6 @@ sub init_pp {
   $declare_ref      = {};
   runtime("dSP;");
   declare( "I32", "oldsave" );
-  declare( "SV",  "**svp" );
   map { declare( "SV", "*$_" ) } qw(sv src dst left right);
   declare( "MAGIC", "*mg" );
   $decl->add( "#undef cxinc", "#define cxinc() Perl_cxinc(aTHX)")
@@ -385,6 +387,13 @@ sub write_back_lexicals {
   }
 }
 
+# The compiler tracks state of lexical variables in @pad to generate optimised
+# code. But multiple execution paths lead to the entry point of a basic block.
+# The state of the first execution path is saved and all other execution
+# paths are restored to the state of the first one.
+# Missing flags are regenerated by loading values.
+# Added flags must are removed; otherwise the compiler would be too optimistic,
+# hence generating code which doesn't match state of the other execution paths.
 sub save_or_restore_lexical_state {
   my $bblock = shift;
   unless ( exists $lexstate{$bblock} ) {
@@ -398,15 +407,16 @@ sub save_or_restore_lexical_state {
       next unless ref($lex);
       my $old_flags = ${ $lexstate{$bblock} }{ $lex->{iv} };
       next if ( $old_flags eq $lex->{flags} );
-      if ( ( $old_flags & VALID_SV ) && !( $lex->{flags} & VALID_SV ) ) {
-        $lex->write_back;
+      my $changed = $old_flags ^ $lex->{flags};
+      if ( $changed & VALID_SV ) {
+        ( $old_flags & VALID_SV ) ? $lex->write_back : $lex->invalidate;
       }
-      if ( ( $old_flags & VALID_DOUBLE ) && !( $lex->{flags} & VALID_DOUBLE ) )
+      if ( $changed & VALID_DOUBLE )
       {
-        $lex->load_double;
+        ( $old_flags & VALID_DOUBLE ) ? $lex->load_double : $lex->invalidate_double;
       }
-      if ( ( $old_flags & VALID_INT ) && !( $lex->{flags} & VALID_INT ) ) {
-        $lex->load_int;
+      if ( $changed & VALID_INT ) {
+        ( $old_flags & VALID_INT ) ? $lex->load_int : $lex->invalidate_int;
       }
     }
   }
@@ -565,6 +575,19 @@ sub dopoptolabel {
   return $cxix;
 }
 
+sub push_label {
+  my $op = shift;
+  my $type = shift;
+  push @{$labels->{$type}}, ( $op );
+}
+
+sub pop_label {
+  my $type = shift;
+  my $op = pop @{$labels->{$type}};
+  # avoid duplicate labels
+  write_label ($op);
+}
+
 sub error {
   my $format = shift;
   my $file   = $curcop->[0]->file;
@@ -604,7 +627,7 @@ sub load_pad {
     my $namesv = $namelist[$ix];
     my $type   = T_UNKNOWN;
     my $flags  = 0;
-    my $name   = "tmp$ix";
+    my $name   = "tmp";
     my $class  = class($namesv);
     if ( !defined($namesv) || $class eq "SPECIAL" ) {
       # temporaries have &PL_sv_undef instead of a PVNV for a name
@@ -628,8 +651,9 @@ sub load_pad {
         $flags |= REGISTER if $3;
       }
     }
+    $name = "${ix}_$name";
     $pad[$ix] =
-      B::Stackobj::Padsv->new( $type, $flags, $ix, "i_$name", "d_$name" );
+      B::Stackobj::Padsv->new( $type, $flags, $ix, "i$name", "d$name" );
 
     debug sprintf( "PL_curpad[$ix] = %s\n", $pad[$ix]->peek ) if $debug{pad};
   }
@@ -666,6 +690,7 @@ sub label {
   my $op = shift;
   # Preserve original label name for "real" labels
   if ($op->can("label") and $op->label) {
+    # cc should error errors on duplicate named labels
     return sprintf( "label_%s_%x", $op->label, $$op );
   } else {
     return sprintf( "lab_%x", $$op );
@@ -674,7 +699,13 @@ sub label {
 
 sub write_label {
   my $op = shift;
-  push_runtime( sprintf( "  %s:", label($op) ) );
+  #debug sprintf("lab_%x:?\n", $$op);
+  unless ($labels->{label}->{$$op}) {
+    my $l = label($op);
+    push_runtime( sprintf( "  %s:", label($op) ) );
+    # avoid printing duplicate jump labels
+    $labels->{label}->{$$op} = $l;
+  }
 }
 
 sub loadop {
@@ -706,10 +737,11 @@ sub doop {
 
 sub gimme {
   my $op    = shift;
-  my $flags = $op->flags;
-  return ( ( $flags & OPf_WANT )
-    ? ( ( $flags & OPf_WANT ) == OPf_WANT_LIST ? G_ARRAY : G_SCALAR )
-    : "dowantarray()" );
+  my $want = $op->flags & OPf_WANT;
+  return ( $want == OPf_WANT_VOID ? G_VOID :
+           $want == OPf_WANT_SCALAR ? G_SCALAR :
+           $want == OPf_WANT_LIST ? G_ARRAY :
+           undef );
 }
 
 #
@@ -726,7 +758,11 @@ sub pp_null {
 sub pp_stub {
   my $op    = shift;
   my $gimme = gimme($op);
-  if ( $gimme != G_ARRAY ) {
+  if ( not defined $gimme ) {
+    write_back_stack();
+    runtime("if (block_gimme() == G_SCALAR)",
+            "\tXPUSHs(&PL_sv_undef);");
+  } elsif ( $gimme == G_SCALAR ) {
     my $obj = B::Stackobj::Const->new(sv_undef);
     push( @stack, $obj );
   }
@@ -748,16 +784,44 @@ sub pp_and {
   reload_lexicals();
   unshift( @bblock_todo, $next );
   if ( @stack >= 1 ) {
-    my $bool = pop_bool();
+    my $obj  = pop @stack;
+    my $bool = $obj->as_bool;
     write_back_stack();
     save_or_restore_lexical_state($$next);
     runtime(
-      sprintf( "if (!$bool) {XPUSHs(&PL_sv_no); goto %s;}", label($next) ) );
+      sprintf( 
+        "if (!$bool) { PUSHs((SV*)%s); goto %s;}", $obj->as_sv, label($next) 
+      ) 
+    );
   }
   else {
     save_or_restore_lexical_state($$next);
     runtime( sprintf( "if (!%s) goto %s;", top_bool(), label($next) ),
       "*sp--;" );
+  }
+  return $op->other;
+}
+
+# Nearly identical to pp_and, but leaves stack unchanged.
+sub pp_andassign {
+  my $op   = shift;
+  my $next = $op->next;
+  reload_lexicals();
+  unshift( @bblock_todo, $next );
+  if ( @stack >= 1 ) {
+    my $obj  = pop @stack;
+    my $bool = $obj->as_bool;
+    write_back_stack();
+    save_or_restore_lexical_state($$next);
+    runtime(
+      sprintf(
+        "PUSHs((SV*)%s); if (!$bool) { goto %s;}", $obj->as_sv, label($next)
+      )
+    );
+  }
+  else {
+    save_or_restore_lexical_state($$next);
+    runtime( sprintf( "if (!%s) goto %s;", top_bool(), label($next) ) );
   }
   return $op->other;
 }
@@ -769,12 +833,13 @@ sub pp_or {
   reload_lexicals();
   unshift( @bblock_todo, $next );
   if ( @stack >= 1 ) {
-    my $bool = pop_bool @stack;
+    my $obj  = pop @stack;
+    my $bool = $obj->as_bool;
     write_back_stack();
     save_or_restore_lexical_state($$next);
     runtime(
       sprintf(
-        "if (%s) { XPUSHs(&PL_sv_yes); goto %s; }", $bool, label($next)
+        "if ($bool) { PUSHs((SV*)%s); goto %s; }", $obj->as_sv, label($next)
       )
     );
   }
@@ -782,6 +847,30 @@ sub pp_or {
     save_or_restore_lexical_state($$next);
     runtime( sprintf( "if (%s) goto %s;", top_bool(), label($next) ),
       "*sp--;" );
+  }
+  return $op->other;
+}
+
+# Nearly identical to pp_or, but leaves stack unchanged.
+sub pp_orassign {
+  my $op   = shift;
+  my $next = $op->next;
+  reload_lexicals();
+  unshift( @bblock_todo, $next );
+  if ( @stack >= 1 ) {
+    my $obj  = pop @stack;
+    my $bool = $obj->as_bool;
+    write_back_stack();
+    save_or_restore_lexical_state($$next);
+    runtime(
+      sprintf(
+        "PUSHs((SV*)%s); if ($bool) { goto %s; }", $obj->as_sv, label($next)
+      )
+    );
+  }
+  else {
+    save_or_restore_lexical_state($$next);
+    runtime( sprintf( "if (%s) goto %s;", top_bool(), label($next) ) );
   }
   return $op->other;
 }
@@ -852,6 +941,11 @@ sub pp_const {
 # coverage: 1-39, fails in 33
 sub pp_nextstate {
   my $op = shift;
+  if ($labels->{'nextstate'}->[-1] and $labels->{'nextstate'}->[-1] == $op) {
+    pop_label 'nextstate';
+  } else {
+    write_label($op);
+  }
   $curcop->load($op);
   @stack = ();
   debug( sprintf( "%s:%d\n", $op->file, $op->line ) ) if $debug{lineno};
@@ -873,12 +967,8 @@ sub pp_nextstate {
   return $op->next;
 }
 
-# coverage: ny
-sub pp_dbstate {
-  my $op = shift;
-  $curcop->invalidate;    # XXX?
-  return default_pp($op);
-}
+# Like pp_nextstate, but used instead when the debugger is active.
+sub pp_dbstate { pp_nextstate(@_) }
 
 #default_pp will handle this:
 #sub pp_bless { $curcop->write_back; default_pp(@_) }
@@ -926,7 +1016,7 @@ sub pp_stringify {
     my $ix = $op->targ;
     my $targ = $pad[$ix];
     runtime "sv_copypv(PL_curpad[$ix], $sv);\t/* pp_stringify */";
-    $stack[-1] = $targ;
+    $stack[-1] = $targ if @stack;
     return $op->next;
   } else {
     default_pp(@_);
@@ -989,7 +1079,9 @@ sub bad_pp_srefgen {
 	SV* sv = $sv;";
     # sv = POPs
     #B::svref_2object(\$sv);
-    if ($svobj->flags & 0xff == $SVt_PVLV and B::PVLV::LvTYPE($svobj) eq ord('y')) {
+    if (($svobj->flags & 0xff) == $SVt_PVLV
+	and B::PVLV::LvTYPE($svobj) eq ord('y'))
+    {
       runtime 'if (LvTARGLEN(sv))
 	    vivify_defelem(sv);
 	if (!(sv = LvTARG(sv)))
@@ -997,7 +1089,7 @@ sub bad_pp_srefgen {
 	else
 	    SvREFCNT_inc_void_NN(sv);';
     }
-    elsif ($svobj->flags & 0xff == $SVt_PVAV) {
+    elsif (($svobj->flags & 0xff) == $SVt_PVAV) {
       runtime 'if (!AvREAL((const AV *)sv) && AvREIFY((const AV *)sv))
 	    av_reify(MUTABLE_AV(sv));
 	SvTEMP_off(sv);
@@ -1025,7 +1117,7 @@ sub bad_pp_srefgen {
 # coverage: 9,10,27
 #sub pp_refgen
 
-# coverage: 28
+# coverage: 28, 14
 sub pp_rv2gv {
   my $op = shift;
   $curcop->write_back if $curcop;
@@ -1128,44 +1220,57 @@ sub pp_gvsv {
   return $op->next;
 }
 
-# coverage: 16
+# coverage: 16, issue44
 sub pp_aelemfast {
   my $op = shift;
-  my $gvsym;
-  if ($ITHREADS) { #padop XXX if it's only a OP, no PADOP? t/CORE/op/ref.t test 36
-    if ($op->can('padix')) {
-      $gvsym = $pad[ $op->padix ]->as_sv;
-    } else {
-      $gvsym = 'PL_incgv'; # XXX passes, but need to investigate why. cc test 43 5.10.1
-      #write_back_stack();
-      #runtime("PUSHs(&PL_sv_undef);");
-      #return $op->next;
+  my $av;
+  if ($op->flags & OPf_SPECIAL) {
+    my $sv = $pad[ $op->targ ]->as_sv;
+    $av = $] > 5.01000 ? "MUTABLE_AV($sv)" : $sv;
+  } else {
+    my $gvsym;
+    if ($ITHREADS) { #padop XXX if it's only a OP, no PADOP? t/CORE/op/ref.t test 36
+      if ($op->can('padix')) {
+        warn "padix\n";
+        $gvsym = $pad[ $op->padix ]->as_sv;
+      } else {
+        $gvsym = 'PL_incgv'; # XXX passes, but need to investigate why. cc test 43 5.10.1
+        #write_back_stack();
+        #runtime("PUSHs(&PL_sv_undef);");
+        #return $op->next;
+      }
     }
-  }
-  else { #svop
-    $gvsym = $op->gv->save;
+    else { #svop
+      $gvsym = $op->gv->save;
+    }
+    $av = "GvAV($gvsym)";
   }
   my $ix   = $op->private;
-  my $flag = $op->flags & OPf_MOD;
+  my $lval = $op->flags & OPf_MOD;
   write_back_stack();
   runtime(
-    "svp = av_fetch(GvAV($gvsym), $ix, $flag);",
-    "PUSHs(svp ? *svp : &PL_sv_undef);"
+    "{ AV* av = $av;",
+    "  SV** const svp = av_fetch(av, $ix, $lval);",
+    "  SV *sv = (svp ? *svp : &PL_sv_undef);",
+    !$lval ? "  if (SvRMAGICAL(av) && SvGMAGICAL(sv)) mg_get(sv);" : "",
+    "  PUSHs(sv);",
+    "}"
   );
   return $op->next;
 }
 
 # coverage: ?
 sub int_binop {
-  my ( $op, $operator ) = @_;
+  my ( $op, $operator, $unsigned ) = @_;
   if ( $op->flags & OPf_STACKED ) {
     my $right = pop_int();
     if ( @stack >= 1 ) {
       my $left = top_int();
-      $stack[-1]->set_int( &$operator( $left, $right ) );
+      $stack[-1]->set_int( &$operator( $left, $right ), $unsigned );
     }
     else {
-      runtime( sprintf( "sv_setiv(TOPs, %s);", &$operator( "TOPi", $right ) ) );
+      my $sv_setxv = $unsigned ? 'sv_setuv' : 'sv_setiv';
+      runtime( sprintf( "$sv_setxv(TOPs, %s);", &$operator( "TOPi", $right ) ) );
     }
   }
   else {
@@ -1173,7 +1278,7 @@ sub int_binop {
     my $right = B::Pseudoreg->new( "IV", "riv" );
     my $left  = B::Pseudoreg->new( "IV", "liv" );
     runtime( sprintf( "$$right = %s; $$left = %s;", pop_int(), pop_int ) );
-    $targ->set_int( &$operator( $$left, $$right ) );
+    $targ->set_int( &$operator( $$left, $$right ), $unsigned );
     push( @stack, $targ );
   }
   return $op->next;
@@ -1438,8 +1543,11 @@ BEGIN {
   sub pp_divide   { numeric_binop( $_[0], $divide_op ) }
 
   sub pp_modulo      { int_binop( $_[0], $modulo_op ) }    # differs from perl's
-  sub pp_left_shift  { int_binop( $_[0], $lshift_op ) }
-  sub pp_right_shift { int_binop( $_[0], $rshift_op ) }
+  # http://perldoc.perl.org/perlop.html#Shift-Operators:
+  # If use integer is in force then signed C integers are used,
+  # else unsigned C integers are used.
+  sub pp_left_shift  { int_binop( $_[0], $lshift_op, VALID_UNSIGNED ) }
+  sub pp_right_shift { int_binop( $_[0], $rshift_op, VALID_UNSIGNED ) }
   sub pp_i_add       { int_binop( $_[0], $plus_op ) }
   sub pp_i_subtract  { int_binop( $_[0], $minus_op ) }
   sub pp_i_multiply  { int_binop( $_[0], $multiply_op ) }
@@ -1581,7 +1689,9 @@ sub pp_list {
   my $op = shift;
   write_back_stack();
   my $gimme = gimme($op);
-  if ( $gimme == G_ARRAY ) {    # sic
+  if ( not defined $gimme ) {
+    runtime("PP_LIST(block_gimme());");
+  } elsif ( $gimme == G_ARRAY ) {    # sic
     runtime("POPMARK;");        # need this even though not a "full" pp_list
   }
   else {
@@ -1746,14 +1856,19 @@ sub pp_entertry {
   write_back_stack();
   my $sym = doop($op);
   $entertry_defined = 1;
-  if (!$op->can("other")) { # 5.11.4-nt t/c_argv.t nok 2
-    debug "ENTERTRY label \$op->next (no other)";
-    runtime(sprintf( "PP_ENTERTRY(%s);",
-		     label( $op->next ) ) );
+  if (!$op->can("other")) { # since 5.11.4
+    debug "ENTERTRY label \$op->next (no other)\n";
+    my $next = $op->next;
+    my $l = label( $next );
+    runtime(sprintf( "PP_ENTERTRY(%s);", $l));
+    push_label ($next, $next->isa('B::COP') ? 'nextstate' : 'leavetry');
   } else {
-    debug "ENTERTRY label \$op->other->next";
+    debug "ENTERTRY label \$op->other->next\n";
     runtime(sprintf( "PP_ENTERTRY(%s);",
 		     label( $op->other->next ) ) );
+    invalidate_lexicals( REGISTER | TEMPORARY );
+    push_label ($op->other->next, 'leavetry');
+    #write_label( $op->other->next );
   }
   invalidate_lexicals( REGISTER | TEMPORARY );
   return $op->next;
@@ -1762,6 +1877,7 @@ sub pp_entertry {
 # coverage: 32
 sub pp_leavetry {
   my $op = shift;
+  pop_label 'leavetry' if $labels->{'leavetry'}->[-1] and $labels->{'leavetry'}->[-1] == $op;
   default_pp($op);
   runtime("PP_LEAVETRY;");
   return $op->next;
@@ -1858,7 +1974,12 @@ sub pp_range {
   my $op    = shift;
   my $flags = $op->flags;
   if ( !( $flags & OPf_WANT ) ) {
-    warn("context of range unknown at compile-time\n");
+    if ($strict) {
+      error("context of range unknown at compile-time\n");
+    } else {
+      warn("context of range unknown at compile-time\n");
+      runtime('warn("context of range unknown at compile-time");');
+    }
     return default_pp($op);
   }
   write_back_lexicals();
@@ -1875,12 +1996,18 @@ sub pp_range {
   return $op->next;
 }
 
-# coverage: 17
+# coverage: 17, 30
 sub pp_flip {
   my $op    = shift;
   my $flags = $op->flags;
   if ( !( $flags & OPf_WANT ) ) {
-    error("context of flip unknown at compile-time");
+    if ($strict) {
+      error("context of flip unknown at compile-time\n");
+    } else {
+      warn("context of flip unknown at compile-time\n");
+      runtime('warn("context of flip unknown at compile-time");');
+    }
+    return default_pp($op);
   }
   if ( ( $flags & OPf_WANT ) == OPf_WANT_LIST ) {
     return $op->first->other;
@@ -1941,6 +2068,10 @@ sub enterloop {
   $nextop->save;
   $lastop->save;
   $redoop->save;
+  # We need to compile the corresponding pp_leaveloop even if it's
+  # never executed. This is needed to get @cxstack right.
+  # Use case:  while(1) { .. }
+  unshift @bblock_todo, ($lastop);
   if (0 and $inline_ops and $op->name eq 'enterloop') {
     warn "inlining enterloop\n" if $debug{op};
     # XXX = GIMME_V fails on freebsd7 5.8.8 (28)
@@ -2033,7 +2164,7 @@ sub pp_redo {
   return $op->next;
 }
 
-# coverage: ?
+# coverage: issue36
 sub pp_last {
   my $op = shift;
   my $cxix;
@@ -2106,6 +2237,7 @@ sub pp_substcont {
     $PERL510 ? "->op_pmstashstartu.op_pmreplstart" : "->op_pmreplstart",
     label( $pmop->pmreplstart )
   );
+  push( @bblock_todo, $pmop->pmreplstart );
   invalidate_lexicals();
   return $pmop->next;
 }
@@ -2185,7 +2317,12 @@ sub cc {
   $leaders = find_leaders( $root, $start );
   my @leaders = keys %$leaders;
   if ( $#leaders > -1 ) {
-    @bblock_todo = ( values %$leaders );
+    # Don't add basic blocks of dead code.
+    # It would produce errors when processing $cxstack.
+    # @bblock_todo = ( values %$leaders );
+    # Instead, save $root (pp_leavesub) separately,
+    # because it will not get compiled if located in dead code.
+    $root->save;
     unshift @bblock_todo, ($start) if $$start;
   }
   else {
@@ -2352,6 +2489,10 @@ OPTION:
       $arg ||= shift @options;
       mark_unused( $arg, undef );
     }
+    elsif ( $opt eq "strict" ) {
+      $arg ||= shift @options;
+      $strict++;
+    }
     elsif ( $opt eq "f" ) {
       $arg ||= shift @options;
       my $value = $arg !~ s/^no-//;
@@ -2370,7 +2511,10 @@ OPTION:
       foreach $ref ( values %optimise ) {
         $$ref = 0;
       }
-      $freetmps_each_loop = 1 if $arg >= 2;
+      if ($arg >= 2) {
+        $freetmps_each_loop = 1;
+        $B::C::destruct = 0 unless $] < 5.008; # fast_destruct
+      }
       if ( $arg >= 1 ) {
         $freetmps_each_bblock = 1 unless $freetmps_each_loop;
       }
@@ -2419,6 +2563,10 @@ OPTION:
         elsif ( $arg eq "t" ) {
           $debug{timings}++;
         }
+        elsif ( $arg eq "F" and eval "require B::Flags;" ) {
+          $debug{flags}++;
+          $B::C::debug{flags}++;
+        }
       }
     }
   }
@@ -2432,8 +2580,11 @@ OPTION:
       no strict 'refs';
       my $ppname = "pp_".Opcodes::opname($_);
       # opflags n: no args, no return values. don't need save/restore stack
+      # But pp_enter, pp_leave use/change global stack.
+      next if $ppname eq 'pp_enter' || $ppname eq 'pp_leave';
       $no_stack{$ppname} = 1
         if Opcodes::opflags($_) & 512;
+      # XXX More Opcodes options to be added later
     }
   }
   #if ($debug{op}) {
@@ -2442,11 +2593,18 @@ OPTION:
 
   # Set some B::C optimizations.
   # optimize_ppaddr is not needed with B::CC as CC does it even better.
-  for (qw(optimize_warn_sv save_data_fh av_init save_sig),
+  for (qw(optimize_warn_sv save_data_fh av_init save_sig destruct),
        $PERL510 ? () : "pv_copy_on_grow")
   {
     no strict 'refs';
     ${"B::C::$_"} = 1;
+  }
+  if (!$B::C::Flags::have_independent_comalloc) {
+    $B::C::av_init = 1;
+    $B::C::av_init2 = 0;
+  } else {
+    $B::C::av_init = 0;
+    $B::C::av_init2 = 1;
   }
   init_sections();
   $init = B::Section->get("init");
@@ -2543,6 +2701,10 @@ source for an XSUB module. The boot_Modulename function (which
 DynaLoader can look for) does the appropriate initialisation and runs
 the main part of the Perl source that is being compiled.
 
+=item B<-strict>
+
+Fail with compile-time errors, which are otherwise deferred to run-time
+warnings.  This happens only for range and flip without compile-time context.
 
 =item B<-D>
 
@@ -2583,6 +2745,10 @@ code as it's processed (C<pp_nextstate>).
 
 Outputs timing information of compilation stages.
 
+=item B<-DF>
+
+Add Flags info to the code.
+
 =item B<-f>C<OPTIM>
 
 Force optimisations on or off one at a time.
@@ -2607,8 +2773,8 @@ Turns off inlining for some new ops.
 
 AUTOMATICALLY inlined:
 
-pp_null pp_stub pp_unstack pp_and pp_or pp_cond_expr pp_padsv pp_const
-pp_nextstate pp_dbstate pp_rv2gv pp_sort pp_gv pp_gvsv
+pp_null pp_stub pp_unstack pp_and pp_andassign pp_or pp_orassign pp_cond_expr
+pp_padsv pp_const pp_nextstate pp_dbstate pp_rv2gv pp_sort pp_gv pp_gvsv
 pp_aelemfast pp_ncmp pp_add pp_subtract pp_multiply pp_divide pp_modulo
 pp_left_shift pp_right_shift pp_i_add pp_i_subtract pp_i_multiply pp_i_divide
 pp_i_modulo pp_eq pp_ne pp_lt pp_gt pp_le pp_ge pp_i_eq pp_i_ne pp_i_lt
@@ -2651,11 +2817,16 @@ Only with -fslow-signals we get the old slow and safe behaviour.
 
 Optimisation level (n = 0, 1, 2). B<-O> means B<-O1>.
 
+The following L<B::C> optimisations are applied automatically:
+
+optimize_warn_sv save_data_fh av-init2|av_init save_sig destruct
+pv_copy_on_grow
+
 B<-O1> sets B<-ffreetmps-each-bblock>.
 
-B<-O2> adds B<-ffreetmps-each-loop>.
+B<-O2> adds B<-ffreetmps-each-loop> and B<-fno-destruct> from L<B::C>.
 
-B<-fomit-taint> must be set explicitly.
+B<-fomit-taint> and B<-fslow-signals> must be set explicitly.
 
 =back
 
@@ -2715,7 +2886,9 @@ generates the output
 
     456123E0
 
-with standard Perl but gives a compile-time error with compiled Perl.
+with standard Perl but gives a run-time warning with compiled Perl.
+
+If the option B<-strict> is used it gives a compile-time error.
 
 =head2 Arithmetic
 
@@ -2729,10 +2902,11 @@ Features of standard perl such as C<$[> which have been deprecated
 in standard perl since Perl5 was released have not been implemented
 in the compiler.
 
-=head1 AUTHOR
+=head1 AUTHORS
 
-Malcolm Beattie, C<mbeattie@sable.ox.ac.uk>
-Reini Urban, C<rurban@cpan.org>
+Malcolm Beattie C<MICB at cpan.org> I<(retired)>,
+Reini Urban C<perl-compiler@googlegroups.com>
+Heinz Knutzen C<heinz.knutzen at gmx.de>
 
 =cut
 

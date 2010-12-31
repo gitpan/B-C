@@ -1,4 +1,3 @@
-/* This XS part is unused since B-C-1.18 for all perls > 5.7 */
 #include <EXTERN.h>
 #include <perl.h>
 #include <XSUB.h>
@@ -70,7 +69,7 @@ precomp(mg)
         if (mg->mg_type == 'r') {
             REGEXP* rx = (REGEXP*)mg->mg_obj;
             RETVAL = Nullsv;
-            if( rx )
+            if (rx)
                 RETVAL = newSVpvn( rx->precomp, rx->prelen );
         }
         else {

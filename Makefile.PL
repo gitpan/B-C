@@ -10,19 +10,36 @@ system("$^X bytecode.pl");
 
 my ($use_declare_independent_comalloc, $extra_cflags, $extra_libs) = (0, "", "");
 my $have_independent_comalloc = &check_independent_comalloc;
-mkdir "lib/B/C" unless -d "lib/B/C";
-open PH, ">", "lib/B/C/Flags.pm";
-print PH "# written by B::C Makefile.PL. \$extra_{cflags,libs} need a leading space if used.\n";
-print PH "package B::C::Flags;\n\n";
-print PH "# -fav-init optimization\n";
-print PH "\$have_independent_comalloc = $have_independent_comalloc;\n";
-print PH "\$use_declare_independent_comalloc = $use_declare_independent_comalloc;\n\n";
-print PH "# use extra compiler flags, after ccopts, resp. ldopts\n";
-print PH "\$extra_cflags = \"$extra_cflags\";\n";
-print PH "\$extra_libs = \"$extra_libs\";\n";
-print PH "\n1;\n";
-close PH;
-chmod (0644, "lib/B/C/Flags.pm");
+{
+    my ($e_c) = grep { /-extra-cflags[= ](.+)/ } @ARGV;
+    my ($e_l) = grep { /-extra-libs[= ](.+)/ } @ARGV;
+    $extra_cflags .= " $e_c" if $e_c;
+    $extra_libs .= " $e_l" if $e_l;
+}
+# cygwin still has the old gdb-6 debugger which does not understand dwarf4 features from gcc-4.5
+#if ($Config{gccversion} =~ /^4\.[56]\./) {
+#    my $gdb_ver = `gdb --version`;
+#    if ($gdb_ver =~ /gdb 6\./) {
+#        print "Adding extra_cflags=-gstrict-dwarf for gcc-4.5 for a gdb-6 debugger which does not understand dwarf4 features\n";
+#        $extra_cflags .= " -gstrict-dwarf";
+#    }
+#}
+sub write_b_c_flags {
+    mkdir "lib/B/C" unless -d "lib/B/C";
+    open PH, ">", "lib/B/C/Flags.pm";
+    print PH "# written by B::C Makefile.PL. \$extra_{cflags,libs} need a leading space if used.\n";
+    print PH "package B::C::Flags;\n\n";
+    print PH "# -fav-init optimization\n";
+    print PH "\$have_independent_comalloc = $have_independent_comalloc;\n";
+    print PH "\$use_declare_independent_comalloc = $use_declare_independent_comalloc;\n\n";
+    print PH "# use extra compiler flags, after ccopts, resp. ldopts\n";
+    print PH "\$extra_cflags = \"$extra_cflags\";\n";
+    print PH "\$extra_libs = \"$extra_libs\";\n";
+    print PH "\n1;\n";
+    close PH;
+    chmod (0644, "lib/B/C/Flags.pm");
+}
+write_b_c_flags;
 
 WriteMakefile(
     NAME	 => "B::C",
@@ -31,24 +48,24 @@ WriteMakefile(
     EXE_FILES  => [qw(script/perlcc script/cc_harness script/assemble script/disassemble)],
     PREREQ_PM  => {'Opcodes'  => '0',
 		   'IPC::Run' => '0',
-		   'B::Flags' => '0.02',
+		   'B::Flags' => '0.04',
 		   'Time::HiRes' => '0',
                    #'B'        => '1.0901'
                   },
-    'AUTHOR'   => 'Malcolm Beattie <mbeattie@sable.ox.ac.uk>, '
+    'AUTHOR'   => 'Malcolm Beattie (retired), '
 	      .   'Reini Urban <perl-compiler@googlegroups.com>',
     'ABSTRACT' => 'Perl compiler',
     (($ExtUtils::MakeMaker::VERSION gt '6.31' and $ExtUtils::MakeMaker::VERSION lt '6.46') ?
        ('EXTRA_META'  => "recommends:\n" .
-        "    B::Debug:    1.12\n".
-        "    Opcodes: 0\n".
-        "    IPC::Run: 0\n",
+        "    B::Debug:  1.16\n".
+        "    Opcodes:   0.9\n".
+        "    IPC::Run:  0\n",
        ) : ()),
     ($ExtUtils::MakeMaker::VERSION gt '6.46' ?
     ('META_MERGE'  => {"recommends" =>
                        {
-                        "B::Debug" => "1.12",
-                        "Opcodes"  => '0',
+                        "B::Debug" => '1.16',
+                        "Opcodes"  => '0.9',
                         "IPC::Run" => 0,
                        },
                        resources =>
@@ -63,12 +80,37 @@ WriteMakefile(
     ) : ()),
     SIGN  => 1,
     clean => { FILES =>
-               "bytecode[0-9]* ccode[0-9]* cccode[0-9]* ".
-               "lib/B/Asmdata.pm script/perlcc ".
+               "bytecode[0-9]* ".
+               "lib/B/Asmdata.pm script/perlcc ccode* cccode* Ccode* ".
  	       "*.core *.stackdump a.out a.exe *.cee *.c *.asm *.dbg *.plc *.obj ".
-               "*.concise *~ dll.base dll.exp mod.pl pcc* *.err *.bak"
+               "*.concise *~ dll.base dll.exp mod.pl pcc* *.bak"
              },
 );
+
+# EUMM has a problem. If a subproject has a XS but main not,
+# main needs the dynamic+dynamic_lib target. So we create an unused dummy target.
+# MSWin32 is quite strict, so we need a full XS, other targets do not care.
+# touch C.c is enough there.
+# XXX Some old 5.6. tests (which exactly?) still fail on regex, so we better keep
+# the old xs and just do not use bootstrap it.
+if (0) {
+    open my $c, ">", "C.c";
+    if ($^O =~ /MSWin32|AIX/) {
+        print $c <<'EOF';
+#include "EXTERN.h"
+#include "perl.h"
+#include "XSUB.h"
+#ifdef __cplusplus
+extern "C"
+#endif
+XS(B__C);
+XS(B__C) { 1; }
+EOF
+    } else {
+        print $c "/* dummy */\n";
+    }
+    close $c;
+}
 
 sub headerpath {
     if ($core) {
@@ -145,7 +187,7 @@ package MY;
 
 sub libscan {
     # Ignore temp testing files
-    return 0 if $_[1] =~ /^(.svn|jit.*|i386|.*\.orig|bytecode.*\.pl|c?ccode\d+\..*|regen_lib\.pl)$/;
+    return 0 if $_[1] =~ /^(.svn|jit.*|i386|.*\.orig|bytecode.*\.pl|c?ccode.*|regen_lib\.pl)$/;
     # Ignore Bytecode on 5.6 for now. The 5.6 CORE module produces better code (until fixed :)
     # Not even the Byteloader works for 5.6 assembled code. The Disassembler does not stop at ret.
     return 0 if $] < 5.007 and $_[1] =~ /ByteLoader|Asmdata\.pm|Bytecode\.pm|Assembler\.pm/;
@@ -186,8 +228,6 @@ sub depend {
     my $byterun_c = File::Spec->catfile('ByteLoader', 'byterun.c');
     my $byterun_h = File::Spec->catfile('ByteLoader', 'byterun.h');
     my $result = "
-C.c : C.xs Makefile
-
 $asmdata : Makefile bytecode.pl @headers
 	\$(PERL) bytecode.pl
 

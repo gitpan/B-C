@@ -50,16 +50,20 @@ if ($DEBUGGING) {
     for (0..@insn_name) { $insncov{$_} = 0; }
   }
 }
-my @todo = (27,44,33,39);
-@todo = (3,6,8..10,12,15,16,18,26,28,31,33,35,38,41..43)
+my @todo = (44); # 33 fixed with r802
+@todo = (3,6,8..10,12,15,16,18,26..28,31,33,35,38,41..44,46)
   if $] < 5.007; # CORE failures, our Bytecode 56 compiler not yet backported
-pop @todo if $] > 5.011003; # 39 passes on 5.11.3
-push @todo, (32) if $] > 5.011003; # entertry still fails with 5.11.4
+push @todo, (27)    if $] >= 5.010; # del_backref fixed with r790. not?
+push @todo, (39)    if $] > 5.007 and $] < 5.010;
 push @todo, (42,43) if $] > 5.011003 and $] < 5.013;
-push @todo, (42) if $ITHREADS and $] == 5.010001;
+push @todo, (42)    if $ITHREADS and $] == 5.010001; # XXX ???
+push @todo, (28)    if $] > 5.013;
 push @todo, (41..43) if !$ITHREADS;
+# cannot store labels on windows 5.12: 21
+push @todo, (21) if $^O =~ /MSWin32|cygwin|AIX/ and $] > 5.011003 and $] < 5.013;
+
 my @skip = (); #(20,27,29) if $] >= 5.010;
-push @skip, (41..43) if !$ITHREADS;
+push @skip, (42..43) if !$ITHREADS;
 
 my %todo = map { $_ => 1 } @todo;
 my %skip = map { $_ => 1 } @skip;
@@ -78,7 +82,7 @@ else {
 for (@tests) {
   my $todo = $todo{$cnt} ? "#TODO " : "#";
   my ($got, @insn);
-  if ($todo{$cnt} and $skip{$cnt} and !$AUTHOR) {
+  if ($todo{$cnt} and $skip{$cnt}) { # and !$AUTHOR
     print sprintf("ok %d # skip\n", $cnt);
     next;
   }

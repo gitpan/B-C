@@ -47,6 +47,7 @@ print OUT <<'!NO!SUBS!';
 # Version 2.06, Reini Urban, 2009-12-28 21:56:15
 # Version 2.07, Reini Urban, 2010-06-30 22:32:20
 # Version 2.08, Reini Urban, 2010-07-30 21:30:33
+# Version 2.09, Reini Urban, 2010-10-11 13:54:52
 
 use strict;
 use warnings;
@@ -58,8 +59,9 @@ use Fcntl qw(:DEFAULT :flock);
 use File::Temp qw(tempfile);
 use Cwd;
 use Pod::Usage;
-use Time::HiRes qw(gettimeofday tv_interval);
-our $VERSION = 2.08;
+# Time::HiRes does not work with 5.6
+# use Time::HiRes qw(gettimeofday tv_interval);
+our $VERSION = 2.09;
 $| = 1;
 eval { require B::C::Flags; };
 
@@ -69,6 +71,7 @@ use subs qw{
     cc_harness check_read check_write checkopts_byte choose_backend
     compile_byte compile_cstyle compile_module generate_code
     grab_stash parse_argv sanity_check vprint yclept spawnit
+    gettimeofday tv_interval
 };
 sub opt(*); # imal quoting
 sub is_win32();
@@ -203,7 +206,15 @@ sub parse_argv {
 
     helpme() if opt(h); # And exit
 
-    #if( opt('time') && !opt(v) );
+    if( $Options->{time} ) {
+      eval { require Time::HiRes; }; # 5.6 has no Time::HiRes
+      if ($@) {
+        warn "-time ignored. No Time::HiRes\n";
+        $Options->{time} = 0;
+      } else {
+        Time::HiRes->import('gettimeofday','tv_interval');
+      }
+    }
     $Output = opt(o) || ( is_win32 or $^O eq 'cygwin' ? 'a.exe' : 'a.out' );
     $Output = is_win32() ? $Output : relativize($Output);
     $logfh  = new FileHandle(">> " . opt('log')) if (opt('log'));
@@ -326,9 +337,12 @@ sub compile_cstyle {
     }
     vprint -1, "c time: $elapsed" if opt('time');
 
+    $t0 = [gettimeofday] if opt('time');
     is_msvc ?
         cc_harness_msvc($cfile,$stash) :
         cc_harness($cfile,$stash) unless opt(c);
+    $elapsed = tv_interval ( $t0 ) if opt('time');
+    vprint -1, "cc time: $elapsed" if opt('time');
 
     if ($lose) {
         vprint 2, "unlinking $cfile";
@@ -369,15 +383,16 @@ sub cc_harness {
     use ExtUtils::Embed ();
     my $command = ExtUtils::Embed::ccopts." -o $Output $cfile ";
     $command .= " -DHAVE_INDEPENDENT_COMALLOC" if $B::C::Flags::have_independent_comalloc;
-    $command .= $B::C::Flags::extra_cflags;
+    $command .= $B::C::Flags::extra_cflags if $B::C::Flags::extra_cflags;
     $command .= " -I".$_ for split /\s+/, opt(I);
     $command .= " -L".$_ for split /\s+/, opt(L);
     # TODO: -shared,-static,-sharedxs,-staticxs
+    my $ldopts = ExtUtils::Embed::ldopts("-std");
     if ($stash) {
         my @mods = split /-?u /, $stash;
         $command .= " ".ExtUtils::Embed::ldopts("-std", \@mods);
     } else {
-        $command .= " ".ExtUtils::Embed::ldopts("-std");
+        $command .= " $ldopts";
     }
     my $libdir  = "$Config{prefix}/lib";
     my $useshrplib = $Config{useshrplib};
@@ -386,7 +401,7 @@ sub cc_harness {
 	$command =~ s|-lperl |$libdir/$Config{libperl} |;
     }
     # $command .= " -lperl" unless $command =~ / -lperl\b/;
-    $command .= $B::C::Flags::extra_libs;
+    $command .= $B::C::Flags::extra_libs if $B::C::Flags::extra_libs;
     vprint 3, "running $Config{cc} $command";
     system("$Config{cc} $command");
 }
@@ -406,9 +421,13 @@ sub yclept {
             }
         }
     }
-    for (@INC) {
-      my $inc = m/\s/ ? qq{"$_"} : $_;
-      $command .= "-I$inc ";
+    my %OINC;
+    $OINC{$Config{$_}}++ for (qw(privlib archlib sitelib sitearch vendorlib vendorarch));
+    $OINC{'.'}++ unless ${^TAINT};
+    $OINC{$_}++ for split ':', $Config{otherlibdirs};
+    for my $i (@INC) {
+        my $inc = $i =~ m/\s/ ? qq{"$i"} : $i;
+        $command .= "-I$inc " unless $OINC{$i}; # omit internal @INC dirs
     }
     return $command;
 }

@@ -44,13 +44,15 @@ CONT=
 # 5.6: rather use -B static
 #CCMD="$PERL script/cc_harness -g3"
 # rest. -DALLOW_PERL_OPTIONS for -Dtlv
-CCMD="$PERL $Mblib script/cc_harness -g3 -DALLOW_PERL_OPTIONS"  
+#CCMD="$PERL $Mblib script/cc_harness -g3 -DALLOW_PERL_OPTIONS"
+CCMD="$PERL $Mblib script/cc_harness"
 LCMD=
 # On some perls I also had to add $archlib/DynaLoader/DynaLoader.a to libs in Config.pm
 }
 
 function vcmd {
     test -n "$QUIET" || echo $*
+    #echo $*
     $*
 }
 
@@ -72,7 +74,7 @@ function fail {
 function runopt {
     o=$1
     optim=$2
-    OCMDO1="$(echo $OCMD|sed -e s/C,-D/C,-O$optim,-D/)"
+    OCMDO1="$(echo $OCMD|sed -e s/C,/C,-O$optim,/)"
     suff="_o${optim}"
     if [ "$optim" == "0" ]; then suff=""; fi
     rm ${o}${suff} ${o}${suff}.c 2> /dev/null
@@ -141,7 +143,7 @@ function ctest {
     fi
 }
 
-ntests=45
+ntests=46
 declare -a tests[$ntests]
 declare -a result[$ntests]
 ncctests=3
@@ -219,13 +221,13 @@ result[25]="0 1 2 3`$PERL -e'print (($] < 5.007) ? q( 4 5) : q())'` 4321";
 # lvalue sub
 tests[26]='sub a:lvalue{my $a=26; ${\(bless \$a)}}sub b:lvalue{${\shift}}; print ${a(b)}';
 result[26]="26";
-# xsub constants
-tests[27]='use Fcntl (); print "ok" if ( Fcntl::O_CREAT() == 64 && &Fcntl::O_CREAT == 64 ); '
+# xsub constants (constant folded). newlib: 0x200, glibc: 0x100
+tests[27]='use Fcntl ();my $a=Fcntl::O_CREAT(); print "ok" if ( $a >= 64 && &Fcntl::O_CREAT >= 64 );'
 result[27]='ok'
 # require $fname
-tests[28]='my($fname,$tmp_fh);while(!open($tmp_fh,">",($fname=q{cctest28_} . rand(999999999999)))){$bail++;die "Failed to create a tmp file after 500 tries" if $bail>500;}print {$tmp_fh} q{$x="ok";1;};close($tmp_fh);require $fname;unlink($fname);print $x;'
+tests[28]='my($fname,$tmp_fh);while(!open($tmp_fh,">",($fname=q{ccode28_} . rand(999999999999)))){$bail++;die "Failed to create a tmp file after 500 tries" if $bail>500;}print {$tmp_fh} q{$x="ok";1;};close($tmp_fh);sleep 1;require $fname;END{unlink($fname);};print $x;'
 result[28]='ok'
-# use test
+# special old IO handling
 tests[29]='use IO;print "ok"'
 result[29]='ok'
 # run-time context of .., fails in CC
@@ -247,7 +249,7 @@ result[33]='ok'
 tests[34]='my $x=$ENV{TMPDIR};print "ok"'
 result[34]='ok'
 # method_named. fixed with 1.16
-tests[35]='package dummy;sub meth{print "ok"};package main;dummy->meth'
+tests[35]='package dummy;sub meth{print "ok"};package main;dummy->meth(1)'
 result[35]='ok'
 # HV self-ref
 tests[36]='my ($rv, %hv); %hv = ( key => \$rv ); $rv = \%hv; print "ok";'
@@ -260,8 +262,7 @@ tests[38]='for(1 .. 1024) { if (open(my $null_fh,"<","/dev/null")) { seek($null_
 result[38]='ok'
 # check re::is_regexp, and on 5.12 if being upgraded to SVt_REGEXP
 # => Undefined subroutine &re::is_regexp with B-C-1.19, even with -ure
-usere="`$PERL -e'print (($] < 5.011) ? q(use re;) : q())'`"
-tests[39]='{'$usere'$a=${qr//};$a=2;print ($] < 5.007?1:re::is_regexp(\$a))}'
+tests[39]='{$a=qr//;print($]<5.007?1:re::is_regexp($a))}'
 result[39]='1'
 # String with a null byte -- used to generate broken .c on 5.6.2 with static pvs
 tests[40]='my $var="this string has a null \\000 byte in it";print "ok";'
@@ -282,9 +283,15 @@ result[43]='ok'
 # perl #72922 (5.11.4 fails with magic_killbackrefs)
 tests[44]='use Scalar::Util "weaken";my $re1=qr/foo/;my $re2=$re1;weaken($re2);print "ok" if $re3=qr/$re1/;'
 result[44]='ok'
-# test autoload and xs_init
-tests[45]='use Data::Dumper ();Data::Dumper::Dumper(\%main::);print "ok";'
+# test dynamic loading
+tests[45]='use Data::Dumper ();Data::Dumper::Dumpxs({});print "ok";'
 result[45]='ok'
+# Exporter should end up in main:: stash when used in
+tests[46]='use Exporter; if (exists $main::{"Exporter::"}) { print "ok"; }'
+result[46]='ok'
+# issue27
+tests[47]='require LWP::UserAgent; print q(ok);'
+result[47]='ok'
 
 # from here on we test CC specifics only
 
@@ -297,25 +304,58 @@ result[102]='ok'
 # CC stringify, srefgen. TODO: use B; fails
 tests[103]='require B; my $x=1e1; my $s="$x"; print ref B::svref_2object(\$s)'
 result[103]='B::PV'
-
+# issue35
+tests[104]='sub new{}sub test{{my $x=1;my $y=$x+1;}my $x=2;if($x!=3){4;}}'
+result[104]=''
+# issue36
+tests[105]='sub f{shift==2}sub test{while(1){last if f(2);}while(1){last if f(2);}}'
+result[105]=''
+# issue37
+tests[106]='my $x;$x||=1;print "ok" if $x;'
+result[106]='ok'
+# issue38
+tests[107]='my $x=2;$x=$x||3;print "ok" if $x==2;'
+result[107]='ok'
+# issue39
+tests[108]='sub f1{0}sub f2{my $x;if(f1()){}if($x){}else{[$x]}}my @a=f2();print "ok";'
+result[108]='ok'
+# issue42
+tests[109]='sub f1{1}f1();print do{7;2},"\n";'
+result[109]='2'
+# issue44
+tests[110]='my @a=(1,2);print $a[0],"\n";'
+result[110]='1'
+# issue45
+tests[111]='my $x;$x//=1;print "ok" if $x;'
+result[111]='ok'
+# issue46
+tests[112]='my $pattern="x";"foo"=~/$pattern/o;print "ok";'
+result[112]='ok'
+# issue47
+tests[113]='my $f=sub{while(1){return(1);}};print $f->(),"\n";'
+result[113]='1'
+# issue48
+tests[114]='sub f{()}print((my ($v)=f())?1:2,"\n");'
+result[114]='2'
+# issue49
+tests[115]='while(1){while(1){last;}last;}print "ok"'
+result[115]='ok'
+# issue51
+tests[116]='my ($p1,$p2)=(80,80);if($p1<=23&&23<=$p2){print "telnet\n";}elsif ($p1 <= 80 && 80 <= $p2){print "http\n";}else{print "fail\n"}'
+result[116]='http'
+# issue52
+tests[117]='my $x;my $y = 1;$x and $y == 2;print $y == 1 ? "ok\n" : "fail\n";'
+result[117]='ok'
 
 init
 
 # 
 # getopts for -q -k -E -Du,-q -v -O2, -a -c -fro-inc
-while getopts "hqackoED:B:O:f:" opt
+while getopts "hackoED:B:O:f:q" opt
 do
   if [ "$opt" = "q" ]; then 
     QUIET=1
-    # O from 5.6 does not support -qq
-    qq="`$PERL -e'print (($] < 5.007) ? q() : q(-qq,))'`"
-    # replace -D*,-v by -q 
-    OCMD="$(echo $OCMD    |sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)" 
-    OCMDO1="$(echo $OCMDO1|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
-    OCMDO2="$(echo $OCMDO2|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
-    OCMDO3="$(echo $OCMDO3|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
-    OCMDO4="$(echo $OCMDO4|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
-    CCMD="$PERL $Mblib script/cc_harness -q -g3 -DALLOW_PERL_OPTIONS"
+    CCMD="$CCMD -q"
   fi
   if [ "$opt" = "o" ]; then Mblib=" "; init; fi
   if [ "$opt" = "c" ]; then CONT=1; fi
@@ -329,12 +369,12 @@ do
         OCMD="$PERL $Mblib -MO=CC,-D${OPTARG},"
     fi
     if [ -z "${OPTARG/-/}" ]; then
-	CCMD="$PERL $Mblib script/cc_harness -d -g3 -DALLOW_PERL_OPTIONS"  
+        CCMD="$CCMD -d"
     fi
   fi
   # -B dynamic or -B static
   if [ "$opt" = "B" ]; then 
-    CCMD="$PERL $Mblib script/cc_harness -d -g3 -B${OPTARG} -DALLOW_PERL_OPTIONS"
+    CCMD="$CCMD -B${OPTARG}"
   fi
   if [ "$opt" = "O" ]; then OPTIM="$OPTARG"; fi
   if [ "$opt" = "f" ]; then
@@ -344,11 +384,20 @@ do
     OCMD="$(echo $OCMD|sed -r -e 's/(-D.*)u,/\1o,/')" 
   fi
 done
+CCMD="$CCMD -g3"
 if [ -z $OPTIM ]; then OPTIM=-1; fi # all
 
 if [ -z "$QUIET" ]; then
     make 
 else
+    # O from 5.6 does not support -qq
+    qq="`$PERL -e'print (($] < 5.007) ? q() : q(-qq,))'`"
+    # replace -D*,-v by -q 
+    OCMD="$(echo $OCMD    |sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)" 
+    OCMDO1="$(echo $OCMDO1|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
+    OCMDO2="$(echo $OCMDO2|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
+    OCMDO3="$(echo $OCMDO3|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
+    OCMDO4="$(echo $OCMDO4|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
     make --silent >/dev/null
 fi
 
@@ -364,7 +413,7 @@ else
   for b in $(seq -f"%02.0f" $ntests); do
     ctest $b
   done
-  if [ $BASE = "testcc.sh" ]; then 
+  if [ $BASE = "testcc.sh" ]; then
     for b in $(seq -f"%02.0f" 101 $(($ncctests+100))); do
       ctest $b
     done

@@ -78,13 +78,13 @@ function btest {
   if [ "$Mblib" != " " -a -z "$SKIP" ]; then 
     rm ${o}s_${VERS}.disasm ${o}_s_${VERS}.concise ${o}_s_${VERS}.dbg 2>/dev/null
     bcall ${o} s
-    [ -n "$Q" ] || echo $PERL $Mblib script/disassemble ${o}s_${VERS}.plc \> ${o}s_${VERS}.disasm
-    $PERL $Mblib script/disassemble ${o}s_${VERS}.plc > ${o}s_${VERS}.disasm
-    mv ${o}s_${VERS}.disasm ${o}_s_${VERS}.disasm
+    [ -n "$Q" ] || echo $PERL $Mblib script/disassemble ${o}s_${VERS}.plc \> ${o}_s_${VERS}.disasm
+    $PERL $Mblib script/disassemble ${o}s_${VERS}.plc > ${o}_s_${VERS}.disasm
+    #mv ${o}s_${VERS}.disasm ${o}_s_${VERS}.disasm
 
     # understand annotations
-    [ -n "$Q" ] || echo $PERL $Mblib script/assemble ${o}S_${VERS}.asm \> ${o}S_${VERS}.plc
-    $PERL $Mblib script/assemble ${o}S_${VERS}.asm > ${o}S_${VERS}.plc
+    [ -n "$Q" ] || echo $PERL $Mblib script/assemble ${o}_s_${VERS}.disasm \> ${o}S_${VERS}.plc
+    $PERL $Mblib script/assemble ${o}_s_${VERS}.disasm > ${o}S_${VERS}.plc
     # full assembler roundtrips
     [ -n "$Q" ] || echo $PERL $Mblib script/disassemble ${o}S_${VERS}.plc \> ${o}S_${VERS}.disasm
     $PERL $Mblib script/disassemble ${o}S_${VERS}.plc > ${o}S_${VERS}.disasm
@@ -124,12 +124,16 @@ function btest {
       test "X$res" = "X${result[$n]}" && pass "./${o}.plc" "=> '$res'"
   else
       fail "./${o}.plc" "'$str' => '$res' Expected: '${result[$n]}'"
-      [ -n "$Q" ] || (echo ${ICMD} -D$D ${o}.plc; ${ICMD} -D$D ${o}.plc)
+      if [ -z "$Q" ]; then
+          echo -n "Again with -Dv? (or Ctrl-Break)"
+          read
+          echo ${ICMD} -D$D ${o}.plc; ${ICMD} -D$D ${o}.plc
+      fi
       test -z $CONT && exit
   fi
 }
 
-ntests=45
+ntests=46
 declare -a tests[$ntests]
 declare -a result[$ntests]
 tests[1]="print 'hi'"
@@ -203,7 +207,7 @@ result[26]="26";
 tests[27]='use Fcntl ();print "ok" if ( &Fcntl::O_WRONLY );'
 result[27]='ok'
 # require test
-tests[28]='my($fname,$tmp_fh);while(!open($tmp_fh,">",($fname=q{cctest_27.} . rand(999999999999)))){$bail++;die "Failed to create a tmp file after 500 tries" if $bail>500;}print {$tmp_fh} q{$x="ok";1;};close($tmp_fh);require $fname;unlink($fname);print $x;'
+tests[28]='my($fname,$tmp_fh);while(!open($tmp_fh,">",($fname=q{cctest_27.} . rand(999999999999)))){$bail++;die "Failed to create a tmp file after 500 tries" if $bail>500;}print {$tmp_fh} q{$x="ok";1;};close($tmp_fh);sleep 1;require $fname;unlink($fname);print $x;'
 result[28]='ok'
 # use test
 tests[29]='use IO;print "ok"'
@@ -227,7 +231,7 @@ result[33]='ok'
 tests[34]='my $x=$ENV{TMPDIR};print "ok"'
 result[34]='ok'
 # methodcall syntax
-tests[35]='package dummy;sub meth{print "ok"};package main;dummy->meth'
+tests[35]='package dummy;sub meth{print "ok"};package main;dummy->meth(1)'
 result[35]='ok'
 # HV self-ref
 tests[36]='my ($rv, %hv); %hv = ( key => \$rv ); $rv = \%hv; print "ok";'
@@ -240,7 +244,7 @@ tests[38]='for(1 .. 1024) { if (open(my $null_fh,"<","/dev/null")) { seek($null_
 result[38]='ok'
 # check re::is_regexp, and on 5.12 if being upgraded to SVt_REGEXP
 usere="`$PERL -e'print (($] < 5.011) ? q(use re;) : q())'`"
-tests[39]=$usere'$a=${qr//};$a=2;print ($] < 5.007?1:re::is_regexp(\$a))'
+tests[39]=$usere'$a=qr/x/;print ($] < 5.007?1:re::is_regexp($a))'
 result[39]='1'
 # => Undefined subroutine &re::is_regexp with B-C-1.19, even with -ure
 # String with a null byte -- used to generate broken .c on 5.6.2 with static pvs
@@ -262,9 +266,15 @@ result[43]='ok'
 # perl #72922 (5.11.4 fails with magic_killbackrefs)
 tests[44]='use Scalar::Util "weaken";my $re1=qr/foo/;my $re2=$re1;weaken($re2);print "ok" if $re3=qr/$re1/;'
 result[44]='ok'
-# test autoload and xs_init
-tests[45]='use Data::Dumper ();Data::Dumper::Dumper(\%main::);print "ok";'
+# test dynamic loading
+tests[45]='use Data::Dumper ();Data::Dumper::Dumpxs({});print "ok";'
 result[45]='ok'
+# Exporter should end up in main:: stash when used in
+tests[46]='use Exporter; if (exists $main::{"Exporter::"}) { print "ok"; }'
+result[46]='ok'
+# issue27
+tests[47]='require LWP::UserAgent; print q(ok);'
+result[47]='ok'
 
 init
 

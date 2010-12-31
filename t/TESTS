@@ -104,17 +104,18 @@ ok
 ######################### 24 ################################
 print sort { print $i++," "; $b <=> $a } 1..4
 >>>>
-0 1 2 3 4321
+0 1 2 3 .*4321
 ######################### 25 ################################
 sub a:lvalue{my $a=26; ${\(bless \$a)}}sub b:lvalue{${\shift}}; print ${a(b)};
 >>>>
 26
 ######################### 26 ################################
-use Fcntl (); print "ok" if ( Fcntl::O_CREAT() == 64 && &Fcntl::O_CREAT == 64 ); 
+# newlib: 0x200, glibc: 0x100
+use Fcntl (); print "ok" if ( Fcntl::O_CREAT() >= 64 && &Fcntl::O_CREAT >= 64 ); 
 >>>>
 ok
 ######################### 27 ################################
-my($fname,$tmp_fh);while(!open($tmp_fh,">",($fname=q{cctest28_} . rand(999999999999)))){$bail++;die "Failed to create a tmp file after 500 tries" if $bail>500;}print {$tmp_fh} q{$x="ok";1;};close($tmp_fh);require $fname;unlink($fname);print $x;
+my($fname,$tmp_fh);while(!open($tmp_fh,">",($fname=q{ccode28_} . rand(999999999999)))){$bail++;die "Failed to create a tmp file after 500 tries" if $bail>500;}print {$tmp_fh} q{$x="ok";1;};close($tmp_fh);sleep 1;require $fname;END{unlink($fname);};print $x;
 >>>>
 ok
 ######################### 28 ################################
@@ -144,7 +145,7 @@ my $x=$ENV{TMPDIR};print "ok"
 >>>>
 ok
 ######################### 34 does init of magic hashes work in 5.10? #####
-package dummy;sub meth{print "ok"};package main;dummy->meth
+package dummy;sub meth{print "ok"};package main;dummy->meth(1)
 >>>>
 ok
 ######################### 35 methodcall syntax fails #####
@@ -160,8 +161,7 @@ for(1 .. 1024) { if (open(my $null_fh,"<","/dev/null")) { seek($null_fh,0,SEEK_S
 >>>>
 ok
 ############## 38 constant autoload loop crash test #########
-eval "require re;" if $] < 5.011;
-$a = ${qr//}; $a = 2; print $] < 5.007 ? 1 : re::is_regexp(\$a);
+{$a=qr/x/;print($] < 5.007 ? 1 : re::is_regexp($a))}
 >>>>
 1
 ############## 39 non-regexps being upgraded to SVt_REGEXP #####
@@ -175,7 +175,7 @@ ok
 use threads; use threads::shared;{my $s="ok";share($s);print $s}
 >>>
 ok
-#### 41 n-magic TODO ####
+#### 41 n-magic ####
 # Shared aggregate, P magic
 use threads; use threads::shared;my %h : shared; print "ok"
 >>>
@@ -190,8 +190,12 @@ ok
 use Scalar::Util "weaken";my $re1=qr/foo/;my $re2=$re1;weaken($re2);print "ok" if $re3=qr/$re1/;
 >>>
 ok
-#### 44 weaken TODO not detected ####
-use Data::Dumper ();Data::Dumper::Dumper(\%main::);print "ok";
+#### 44 weaken TODO not imported ####
+use Data::Dumper ();Data::Dumper::Dumpxs({});print "ok";
 >>>
 ok
-#### 45 # test autoload and xs_init ###
+#### 45 test dynamic loading ####
+use Exporter; if (exists $main::{"Exporter::"}) { print "ok"; }
+>>>
+ok
+#### 46 Exporter should end up in main:: stash when used in ####
