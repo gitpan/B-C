@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               B-C
-version:            1.28
+version:            1.29
 abstract:           Perl compiler
 author:
     - Malcolm Beattie (retired), Reini Urban <perl-compiler@googlegroups.com>
@@ -25,11 +25,12 @@ no_index:
     directory:
         - t
         - inc
-generated_by:       ExtUtils::MakeMaker version 6.56
+generated_by:       ExtUtils::MakeMaker version 6.55_02
 meta-spec:
     url:      http://module-build.sourceforge.net/META-spec-v1.4.html
     version:  1.4
 recommends:
     B::Debug:  1.16
+    B::Flags:  0.04
     IPC::Run:  0
-    Opcodes:   0.9
+    Opcodes:   0.10

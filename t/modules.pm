@@ -55,6 +55,7 @@ sub log_pass {
     $todo = '';
   }
 
+  diag( "$pass_msg $module$todo" );
   open(LOG, ">>", "$log");
   print LOG "$pass_msg $module$todo\n";
   close LOG;
@@ -64,6 +65,9 @@ sub log_err {
   my ($module, $out, $err) = @_;
   return if(!$log);
 
+  # diag prints for TODO to a special todo fh, which does not end at the console
+  diag( "fail $module $out" );
+  # Test::More->builder->_print_comment( Test::More->builder->failure_output, "fail $module $out" );
   $_ =~ s/\n/\n# /xmsg foreach($out, $err); # Format for comments
 
   open(ERR, ">>", "$log.err");
@@ -82,7 +86,7 @@ sub get_module_list {
   # Parse for command line modules and use this if seen.
   my @modules = grep {$_ !~ /^-(all|log|subset|t)$/} @ARGV; # Parse out -all var.
   my $module_list  = 't/top100';
-  if (@modules and -e $modules[0]) {
+  if (@modules and -e $modules[0] and ! -x $modules[0]) { # skip an executable compiled module
     $module_list = $modules[0];
   }
   elsif (@modules) {
@@ -98,7 +102,7 @@ sub get_module_list {
   close F;
   @modules = grep {s/\s+//g;!/^#/} split /\n/, $s;
 
-  #diag "scanning installed modules";
+  diag "scanning installed modules";
   for my $m (@modules) {
     # redirect stderr
     open (SAVEOUT, ">&STDERR");
@@ -124,7 +128,7 @@ sub get_module_list {
 sub random_sublist {
   my @modules = @_;
   my %sublist;
-  while (keys %sublist <= 10) {
+  while (keys %sublist < 10) {
     my $m = $modules[int(rand(scalar @modules))];
     next unless $modules{$m}; # Don't random test uninstalled module
     $sublist{$m} = 1;
@@ -177,10 +181,10 @@ sub testcc   {
     # $CPAN::DEBUG++;
     my $cwd = Cwd::getcwd();
     # posix shell only, but we are using a posix shell here. XXX -Wb=-uTest::Builder
-    $self->prefs->{test}->{commandline} = "for t in t/*.t; do echo \"# \$t\"; $^X -I$cwd/blib/arch -I$cwd/blib/lib $cwd/blib/script/perlcc -r -stash \$t; done";
+    my $X = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
+    $self->prefs->{test}->{commandline} = "for t in t/*.t; do echo \"# \$t\"; $X -I$cwd/blib/arch -I$cwd/blib/lib $cwd/blib/script/perlcc -r -Wb=-O1 -stash \$t; done";
     $self->prefs->{test_report} = ''; # XXX ignored!
     $self->{make_test} = 'NO'; # override YAML check "Has already been tested successfully"
     $self->test(@_);
     # done
 }
-

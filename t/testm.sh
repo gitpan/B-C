@@ -4,10 +4,12 @@
 #
 # How to installed skip modules: 
 # t/testm.sh -s runs:
-#   grep ^skip log.modules-$ver|cut -c6-| xargs perl$ver -S cpan
+#   grep ^skip log.modules-$ver|perl -lane'print $F[1]'| xargs perl$ver -S cpan
 # perl$ver -S cpan `grep -v '#' t/mymodules`
 #
 # -t runs CPAN::Shell->testcc($module)
+# Example:
+# cwd=~/Perl/B-C; perl5.12.2d-nt -I$cwd/blib/arch -I$cwd/blib/lib $cwd/blib/script/perlcc -S -r -Wb=-O1 -v 4 t/test.t
 
 function help {
   echo "t/testm.sh [OPTIONS] [module|modules-file]..."
@@ -15,6 +17,7 @@ function help {
   echo " -k                 keep temp. files on PASS"
   echo " -D<arg>            add debugging flags"
   echo " -f<arg>            add optimisation flags"
+  echo " -O<arg>            add optimisation flags"
   echo " -l                 log"
   echo " -o                 orig. no -Mblib, use installed modules (5.6, 5.8)"
   echo " -t                 run the module tests also, not only use Module (experimental)"
@@ -93,6 +96,7 @@ if [ -n "$1" ]; then
 	# run a mymodules.t like test
 	$PERL $Mblib t/modules.t $TEST "$1"
     else
+        [ -z "$QUIET" ] && PERLCC_OPTS="$PERLCC_OPTS -v 4"
 	while [ -n "$1" ]; do
 	    # single module. update,setup,install are UAC terms
 	    name="$(perl -e'$a=shift;$a=~s{::}{_}g;$a=~s{(install|setup|update)}{substr($1,0,4)}ie;print lc($a)' $1)"
@@ -109,7 +113,6 @@ if [ -n "$1" ]; then
 		fi
 	      fi
 	    else
-	      [ -z "$QUIET" ] && PERLCC_OPTS="$PERLCC_OPTS -v 4"
 	      echo $PERL $Mblib blib/script/perlcc $PERLCC_OPTS -r $KEEP -e "\"use $1; print 'ok'\"" -o $name
 	      $PERL $Mblib blib/script/perlcc $PERLCC_OPTS -r $KEEP -e "use $1; print 'ok'" -o $name
               test -f a.out.c && mv a.out.c $name.c

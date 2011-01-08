@@ -73,15 +73,15 @@ if ($PERL56) {
   $SVt_PVGV = 13;
   $SVf_FAKE = 0x00100000;
   $POK = 0x00040000 | 0x04000000;
-  for ( my $i = 0 ; $i < @optype ; $i++ ) {
-    $optype_enum{ $optype[$i] } = $i;
-  }
   sub MAGICAL56 { $_[0]->FLAGS & 0x000E000 } #(SVs_GMG|SVs_SMG|SVs_RMG)
 } else {
   no strict 'subs';
   $SVt_PV = 4;
   $SVt_PVGV = SVt_PVGV;
   $SVf_FAKE = SVf_FAKE;
+}
+for ( my $i = 0 ; $i < @optype ; $i++ ) {
+  $optype_enum{ $optype[$i] } = $i;
 }
 
 BEGIN {
@@ -161,17 +161,27 @@ sub B::OP::ix {
       #   op->other points to the leavetry op, which is needed for the eval scope.
       if ($op->name eq 'entertry') {
 	$opsize = $op->size + (2*$Config{ptrsize});
-	$arg = $PERL56 ? $optype_enum{LOGOP} : $opsize | $op->type << 7;
-	# "make entertry LISTOP" patch in consideration
-	# bless $op, $] > 5.013007 ? 'B::LISTOP' : 'B::LOGOP';
-        warn "[perl #80622] Upgrading entertry from BASEOP to LOGOP...\n";
+	$arg = $PERL56 ? $optype_enum{LOGOP} : $opsize | $optype_enum{LOGOP} << 7;
+        warn "[perl #80622] Upgrading entertry from BASEOP to LOGOP...\n"
+	  unless $quiet;
         bless $op, 'B::LOGOP';
+      } elsif ($op->name eq 'aelemfast') {
+        if (0) {
+          my $class = ITHREADS ? 'PADOP' : 'SVOP';
+          my $type  = ITHREADS ? $optype_enum{PADOP} : $optype_enum{SVOP};
+          $opsize = $op->size + $Config{ptrsize};
+          $arg = $PERL56 ? $type : $opsize | $type << 7;
+          warn "Upgrading aelemfast from BASEOP to $class...\n"
+            unless $quiet;
+          bless $op, "B::$class";
+        }
       } elsif ($DEBUGGING) { # only needed when we have to check for new wrong BASEOP's
 	if (eval "require Opcodes;") {
 	  my $class = Opcodes::opclass($op->type);
 	  if ($class > 0) {
 	    my $classname = $optype[$class];
-            warn "Upgrading entertry {$op->name} BASEOP to $classname...\n";
+	    my $name = $op->name;
+            warn "Upgrading $name BASEOP to $classname...\n" unless $quiet;
 	    bless $op, "B::".$classname if $classname;
 	  }
 	} else {
@@ -643,21 +653,27 @@ sub B::HV::bwalk {
       if ($] > 5.013005 and $hv->NAME eq 'B') { # see above. omit B prototypes
 	return;
       }
-      nice "[prototype]";
-      # XXX when? do not init empty prototypes. But only 64-bit fails.
-      if ($PERL510 and $v->SvTYPE == $SVt_PVGV) {
-	asm "newpv", cstring $hv->NAME . "::$k";
+      # XXX Not working! Special init for empty (null-string) prototypes
+      # Note: not found constants are &PL_sv_yes, found typically IV
+      if ($PERL510 and 0 and $v->SvTYPE == $SVt_PV and !$v->PVX) {
+        nice "[emptyCONST]";
+	asm "newpv", pvstring ($hv->NAME . "::" . $k);
 	# Beware of special gv_fetchpv GV_* flags.
 	# gv_fetchpvx uses only GV_ADD, which fails e.g. with *Fcntl::O_SHLOCK,
 	# if "Your vendor has not defined Fcntl macro O_SHLOCK"
-	asm "gv_fetchpvn_flags", 0x20; 	# GV_NOADD_NOINIT
+	asm "gv_fetchpvn_flags", 1 << 7 + $SVt_PV, "f:0x81<<7+t:PV";# GVf_IMPORTED_CV+INTRO
+        $svtab{$$v} = $varix = $tix;
+        asm "sv_flags",  $v->FLAGS;
+        $v->bsave( $tix++ );
+        #$tix++;
       } else {
-	asm "gv_fetchpvx", cstring $hv->NAME . "::$k";
+        nice "[prototype]";
+	asm "gv_fetchpvx", cstring ($hv->NAME . "::" . $k);
+        $svtab{$$v} = $varix = $tix;
+        # we need the sv_flags before, esp. for DEBUGGING asserts
+        asm "sv_flags",  $v->FLAGS;
+        $v->bsave( $tix++ );
       }
-      $svtab{$$v} = $varix = $tix;
-      # we need the sv_flags before, esp. for DEBUGGING asserts
-      asm "sv_flags",  $v->FLAGS;
-      $v->bsave( $tix++ );
     }
   }
 }
@@ -673,9 +689,9 @@ sub B::OP::bsave_thin {
   if ( $ix != $opix ) {
     nice '-' . $op->name . '-', asm "ldop", $opix = $ix;
   }
+  asm "op_flags",   $op->flags, op_flags( $op->flags );
   asm "op_next",    $nextix;
   asm "op_targ",    $op->targ if $op->type;             # tricky
-  asm "op_flags",   $op->flags, op_flags( $op->flags );
   asm "op_private", $op->private;                       # private concise flags?
 }
 
@@ -964,7 +980,7 @@ sub B::OP::opwalk {
       ? () : $op->oplist; # 5.6 may be called by a COP
     push @cloop, undef;
     $ix = $_->ix while $_ = pop @oplist;
-    print "\n# rest of cloop\n";
+    #print "\n# rest of cloop\n";
     while ( $_ = pop @cloop ) {
       asm "ldop",    $optab{$$_};
       asm "op_next", $optab{ ${ $_->next } };

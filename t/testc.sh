@@ -244,7 +244,7 @@ result[32]='12'
 # fails with new constant only. still not repro (r-magic probably)
 tests[33]='BEGIN{unshift @INC,("t");} use qr_loaded_module; print "ok"'
 result[33]='ok'
-# init of magic hashes. %ENV has e magic since a0714e2c perl.c  
+# init of magic hashes. %ENV has e magic since a0714e2c perl.c
 # (Steven Schubiger      2006-02-03 17:24:49 +0100 3967) i.e. 5.8.9 but not 5.8.8
 tests[34]='my $x=$ENV{TMPDIR};print "ok"'
 result[34]='ok'
@@ -262,7 +262,7 @@ tests[38]='for(1 .. 1024) { if (open(my $null_fh,"<","/dev/null")) { seek($null_
 result[38]='ok'
 # check re::is_regexp, and on 5.12 if being upgraded to SVt_REGEXP
 # => Undefined subroutine &re::is_regexp with B-C-1.19, even with -ure
-tests[39]='{$a=qr//;print($]<5.007?1:re::is_regexp($a))}'
+tests[39]='{$a=qr/x/;print($]<5.007?1:re::is_regexp($a))}'
 result[39]='1'
 # String with a null byte -- used to generate broken .c on 5.6.2 with static pvs
 tests[40]='my $var="this string has a null \\000 byte in it";print "ok";'
