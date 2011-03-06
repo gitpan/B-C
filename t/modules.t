@@ -29,14 +29,19 @@ use Test::More;
 
 # Try some simple XS module which exists in 5.6.2 and blead
 # otherwise we'll get a bogus 40% failure rate
-
+my $staticxs = '--staticxs';
 BEGIN {
-  # check whether linking with xs works at all
+  # check whether linking with xs works at all. Try with and without --staticxs
   my $X = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
-  my $result = `$X -Mblib blib/script/perlcc -S -o a -e "use Scalar::Util;"`;
+  my $result = `$X -Mblib blib/script/perlcc --staticxs -S -oa -e"use Scalar::Util;"`;
   unless (-e 'a' or -e 'a.out') {
-    plan skip_all => "perlcc cannot link XS module Scalar::Util. Most likely wrong ldopts.";
-    exit;
+    my $result = `$X -Mblib blib/script/perlcc -S -oa -e"use Scalar::Util;"`;
+    unless (-e 'a' or -e 'a.out') {
+      plan skip_all => "perlcc cannot link XS module Scalar::Util. Most likely wrong ldopts.";
+      exit;
+    } else {
+      $staticxs = '';
+    }
   }
   unshift @INC, 't';
 }
@@ -151,8 +156,8 @@ for my $module (@modules) {
       foreach my $opt (@opts) {
         $opt .= " $keep" if $keep;
         # XXX TODO ./a often hangs but perlcc not
-        my @cmd = grep {!/^$/} $runperl,"-Mblib","blib/script/perlcc",$opt,"-r","mod.pl";
-        my $cmd = "$runperl -Mblib blib/script/perlcc $opt -r"; # only for the msg
+        my @cmd = grep {!/^$/} $runperl,"-Mblib","blib/script/perlcc",$opt,$staticxs,"-r","mod.pl";
+        my $cmd = "$runperl -Mblib blib/script/perlcc $opt $staticxs -r"; # only for the msg
         ($result, $out, $err) = run_cmd(\@cmd, 120); # in secs
         ok(-s $binary_file,
            "$module_count: use $module  generates non-zero binary")
@@ -165,14 +170,14 @@ for my $module (@modules) {
           my ($r, $err1);
           $module_passed = 0;
           @cmd = ($runperl,"-Mblib","-MO=C,-oa.out.c","mod.pl");
-          ($r, $out, $err1) = run_cmd(\@cmd, 10); # in secs
+          ($r, $out, $err1) = run_cmd(\@cmd, 30); # in secs
           @cmd = ($runperl,"-Mblib","script/cc_harness","-o","a","a.out.c");
           ($r, $out, $err1) = run_cmd(\@cmd, 20); # in secs
           @cmd = ($^O eq 'MSWin32' ? "a.exe" : "./a");
-          ($r, $out, $err1) = run_cmd(\@cmd, 40); # in secs
+          ($r, $out, $err1) = run_cmd(\@cmd, 10); # in secs
           if ($out =~ /ok$/ms) {
             $module_passed = 1;
-            diag "crosscheck that perlcc only failed. With -MO=C + cc_harness => ok";
+            diag "crosscheck that only perlcc $staticxs failed. With -MO=C + cc_harness => ok";
           }
         }
         log_pass($module_passed ? "pass" : "fail", $module, $TODO);
@@ -197,7 +202,7 @@ for my $module (@modules) {
           `$runperl -Mblib -It -MCPAN -Mmodules -e"CPAN::Shell->testcc("$module")"`;
         }
       }
-      unlink ("mod.pl", 'a', 'a.out');
+      unlink ("mod.pl", 'a', 'a.out', 'a.exe');
     }}
 }
 
@@ -211,59 +216,52 @@ log_diag(sprintf("skip %3d / %3d (%s not installed)\n",
 
 exit;
 
-# for t in $(cat t/top100); do grep -a " $t" t/modules.t `ls log.modules-5.0*|grep -v .err`; read; done
+# t/todomod.pl
+# for t in $(cat t/top100); do perl -ne"\$ARGV=~s/log.modules-//;print \$ARGV,': ',\$_ if / $t\s/" t/modules.t `ls log.modules-5.0*|grep -v .err`; read; done
 sub is_todo {
   my $module = shift or die;
   my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
-
+  # ---------------------------------------
+  # XXX Attribute::Handlers has a CHECK block. Need to add this to the compilation
   foreach(qw(
-    LWP
     Attribute::Handlers
     Moose
     MooseX::Types
+    Class::MOP
   )) { return 'always' if $_ eq $module; }
   if ($] < 5.007) { foreach(qw(
-    Module::Build
-    Digest::MD5
+    Storable
     Template::Stash
     ExtUtils::Install
     Class::Accessor
+    Sub::Name
+    Filter::Util::Call
+    DateTime::Locale
   )) { return '5.6' if $_ eq $module; }}
   if ($] < 5.008009) { foreach(qw(
-    Params::Validate
     ExtUtils::CBuilder
   )) { return '< 5.8.9' if $_ eq $module; }}
-  if ($] =~ /^5.008/) { foreach(qw(
+  if ($] =~ /^5.008/ or $] eq '5.010000') { foreach(qw(
     Test::Harness
     Test::Simple
     Test::Tester
     Test::Exception
     File::Temp
-  )) { return '5.8.x' if $_ eq $module; }}
+  )) { return '5.8.x and 5.10.0' if $_ eq $module; }}
   if ($] == 5.008009) { foreach(qw(
+    Test
     Test::Deep
     Test::Warn
     Test::Pod
+    Test::NoWarnings
   )) { return '5.8.9' if $_ eq $module; }}
-  if ($] > 5.013) { foreach(qw(
-    ExtUtils::MakeMaker
-  )) { return '> 5.13' if $_ eq $module; }}
-  if ($] < 5.013008) { foreach(qw(
-    Sub::Name
-    DBI
-    DateTime::Locale
-    DateTime
-  )) { return '< 5.13.8' if $_ eq $module; }}
-
+  # ---------------------------------------
   if ($Config{useithreads}) {
     foreach(qw(
-      Storable
-      Class::Accessor
       Test::Tester
-      Filter::Util::Call
+      ExtUtils::Install
     )) { return 'with threads' if $_ eq $module; }
     if ($] > 5.007 and $] < 5.012) { foreach(qw(
-      MIME::Base64
       Module::Pluggable
       if
       Encode
@@ -274,8 +272,15 @@ sub is_todo {
       File::Path
       Path::Class
     )) { return '5.8-5.10 DEBUGGING with threads' if $_ eq $module; }}
-    if ($] >= 5.009 and $] < 5.12) { foreach(qw(
+    if ($] >= 5.009 and $] < 5.012) { foreach(qw(
       Carp::Clan
+      Pod::Text
+      Data::Dumper
+      Template::Stash
+      DateTime
+      DateTime::TimeZone
+      DateTime::Locale
+      ExtUtils::CBuilder
     )) { return '5.10 with threads' if $_ eq $module; }}
     if ($] < 5.012) { foreach(qw(
       Module::Build
@@ -284,34 +289,42 @@ sub is_todo {
       IO::Compress::Base
     )) { return '< 5.13 DEBUGGING with threads' if $_ eq $module; }}
     if ($] < 5.012 and !$DEBUGGING) { foreach(qw(
-      Digest::SHA1
     )) { return '< 5.13 !DEBUGGING with threads' if $_ eq $module; }}
     if ($] < 5.013) { foreach(qw(
-      Test::Harness
-      ExtUtils::Install
-      Class::MOP
-      FCGI
     )) { return '< 5.13 with threads' if $_ eq $module; }}
     if ($] >= 5.012) { foreach(qw(
     )) { return '>=5.12 with threads' if $_ eq $module; }}
     if ($] >= 5.013) { foreach(qw(
+      Template::Stash
     )) { return '5.13 with threads' if $_ eq $module; }}
-  } else { #no threads
+  } else { #no threads --------------------------------
     foreach(qw(
+      LWP
       MooseX::Types
     )) { return 'without threads' if $_ eq $module; }
     if ($DEBUGGING) { foreach(qw(
       Storable
     )) { return 'debugging without threads' if $_ eq $module; }}
     if ($] < 5.010) { foreach(qw(
-      B::Hooks::EndOfScope
     )) { return '<5.10 without threads' if $_ eq $module; }}
     if ($] >= 5.010 and $] < 5.013) { foreach(qw(
       ExtUtils::MakeMaker
     )) { return '5.10,5.12 without threads' if $_ eq $module; }}
     if ($] >= 5.013) { foreach(qw(
+      Module::Build
     )) { return '5.13 without threads' if $_ eq $module; }}
   }
+  # ---------------------------------------
+  if ($] < 5.013008) { foreach(qw(
+    Module::Build
+  )) { return '< 5.13.8' if $_ eq $module; }} # looks like Dave fixed that in CORE with 5.13.8
+  if ($] < 5.010) { foreach(qw(
+    DBI
+  )) { return '< 5.10' if $_ eq $module; }}
+  if ($] > 5.013) { foreach(qw(
+    ExtUtils::MakeMaker
+  )) { return '> 5.13' if $_ eq $module; }}
+  # ---------------------------------------
 }
 
 sub is_skip {
@@ -323,6 +336,7 @@ sub is_skip {
     #}
     if ($Config{useithreads}) { # hangs and crashes threaded since 5.12
       foreach (qw( Moose )) {
+        # Recursive inheritance detected in package 'Moose::Object' at /usr/lib/perl5/5.13.10/i686-debug-cygwin/DynaLoader.pm line 103
 	 return 'hangs threaded, $] >= 5.011004' if $_ eq $module;
       }
     }

@@ -66,8 +66,10 @@ sub log_err {
   return if(!$log);
 
   # diag prints for TODO to a special todo fh, which does not end at the console
-  diag( "fail $module $out" );
+  # ignore diag the TODO empty STDERR test for now. we diag the ok test only
+  # diag( "fail $module $out" );
   # Test::More->builder->_print_comment( Test::More->builder->failure_output, "fail $module $out" );
+
   $_ =~ s/\n/\n# /xmsg foreach($out, $err); # Format for comments
 
   open(ERR, ">>", "$log.err");
@@ -118,7 +120,7 @@ sub get_module_list {
   }
 
   if (&is_subset) {
-    log_diag("testing a subset of the top100 modules");
+    log_diag("testing a random subset of the top100 modules");
     @modules = random_sublist(@modules);
   }
 
@@ -182,7 +184,7 @@ sub testcc   {
     my $cwd = Cwd::getcwd();
     # posix shell only, but we are using a posix shell here. XXX -Wb=-uTest::Builder
     my $X = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
-    $self->prefs->{test}->{commandline} = "for t in t/*.t; do echo \"# \$t\"; $X -I$cwd/blib/arch -I$cwd/blib/lib $cwd/blib/script/perlcc -r -Wb=-O1 -stash \$t; done";
+    $self->prefs->{test}->{commandline} = "for t in t/*.t; do echo \"# \$t\"; $X -I\"$cwd/blib/arch\" -I\"$cwd/blib/lib\" \"$cwd/blib/script/perlcc\" -T -r --staticxs \$t; done";
     $self->prefs->{test_report} = ''; # XXX ignored!
     $self->{make_test} = 'NO'; # override YAML check "Has already been tested successfully"
     $self->test(@_);

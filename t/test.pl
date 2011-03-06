@@ -409,6 +409,10 @@ sub run_cc_test {
 	print "ok $cnt # skip $backend SIGSEGV or hangs\n";
 	return 0;
     }
+    if ($todo and $cnt =~ /^(15|103)$/ and $] eq '5.010001') {
+	print "ok $cnt # skip $backend hangs\n";
+	return 0;
+    }
     $opt =~ s/,-/_/ if $opt;
     $opt = '' unless $opt;
     use Config;
@@ -432,6 +436,8 @@ sub run_cc_test {
     } else {
         $backend = "-qq,$backend,-q" if (!$ENV{TEST_VERBOSE} and $] > 5.007);
     }
+    $backend .= ",-fno-warnings" if $] >= 5.013005;
+    $backend .= ",-fno-fold" if $] >= 5.013009;
     $got = run_perl(switches => [ "$Mblib -MO=$backend,-o${cfile}" ],
                     verbose  => $ENV{TEST_VERBOSE}, # for debugging
                     nolib    => $ENV{PERL_CORE} ? 0 : 1, # include ../lib only in CORE
@@ -532,49 +538,6 @@ sub prepare_c_tests {
     }
 }
 
-sub todo_tests_default {
-    my $what = shift;
-    my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
-    my $ITHREADS  = ($Config{useithreads});
-
-    my @todo  = (15,35,41..46); # 8,14-16 fail on 5.00505 (max 20 then)
-    #push @todo, (15) if !$ITHREADS;
-    # 15 passes on cygwin XP, but fails on cygwin Win7
-    if ($what =~ /^c(|_o[1-4])$/) {
-        # 14+23 fixed with 1.04_29, for 5.10 with 1.04_31
-        # 15+28 fixed with 1.04_34
-        # 5.6.2 CORE: 8,15,16,22. 16 fixed with 1.04_24, 8 with 1.04_25
-        # 5.8.8 CORE: 11,14,15,20,23 / non-threaded: 5,7-12,14-20,22-23,25
-        # @todo = (15,35,39,44,46)    if $] < 5.010;
-        push @todo, (103)  if $] < 5.007;
-        #push @todo, (45)   if $what ne 'c' and $] < 5.007;
-        push @todo, (39)   if $] > 5.007 and $] < 5.009;
-        push @todo, (103)  if $] >= 5.010;
-        push @todo, (28)   if $what ne 'c_o1';
-        push @todo, (12)   if $what =~ /c_o[234]/;
-        push @todo, (19)   if $what eq 'c_o2' and $ITHREADS;
-	push @todo, (29)   if $what =~ /c_o[1234]/ and $] >= 5.010;
-	push @todo, (10,12,19,25) if $what eq 'c_o4';
-    } elsif ($what =~ /^cc/) {
-        # 8,11,14..16,18..19 fail on 5.00505 + 5.6, old core failures (max 20)
-        # on cygwin 29 passes
-        push @todo, (15,21,29,30,45); #5.8.9
-        #push @todo, (27)   if $] < 5.007;
-        push @todo, (39)    if $] > 5.007 and $] < 5.009;
-        #push @todo, (11,27) if $] < 5.009;
-        push @todo, (14)    if $] >= 5.010 and $^O !~ /MSWin32|cygwin/i;
-        # solaris also. I suspected nvx<=>cop_seq_*
-        push @todo, (12)    if $^O eq 'MSWin32' and $Config{cc} =~ /^cl/i;
-        #push @todo, (3,4,27,42,43) if $] >= 5.011004 and $ITHREADS;
-        push @todo, (10,16,27) if $what eq 'cc_o2';
-        push @todo, (26)    if $what =~ /^cc_o[12]/;
-        push @todo, (3,4)   if $] >= 5.012 and $ITHREADS;
-    }
-    push @todo, (25)   if $] >= 5.010 and $] < 5.012 and !$ITHREADS;
-    #push @todo, (32)       if $] >= 5.011003;
-    return @todo;
-}
-
 sub run_c_tests {
     my $backend = $_[0];
     my @todo = @{$_[1]};
@@ -612,6 +575,14 @@ require B; my $x=1e1; my $s="$x"; print ref B::svref_2object(\$s)
 >>>>
 B::PV
 ######### 103 - CC stringify srefgen ############
+@a=(1..4);while($a=shift@a){print $a;}continue{$a=~/2/ and reset q(a);}
+>>>>
+12
+######### 104 CC reset ###############################
+use blib;use B::CC;my int $r;my $i:int=2;our double $d=3.0; $r=$i*$i; $r*=$d; print $r;
+>>>>
+12
+######### 105 CC attrs ###############################
 CCTESTS
         my $i = 100;
         for (split /\n####+.*##\n/, $cctests) {
@@ -639,7 +610,10 @@ CCTESTS
         if ($todo{$cnt} and $skip{$cnt} and
             # those are currently blocking the system
             # do not even run them at home if TODO+SKIP
-            (!$AUTHOR or ($cnt==14 or $cnt==18)))
+            (!$AUTHOR
+             or ($cnt==15 and $backend eq 'C,-O1') # hanging
+             # or ($cnt==14 or $cnt==18)
+            ))
         {
             print sprintf("ok %d # skip\n", $cnt);
         } else {
@@ -669,7 +643,7 @@ sub ctest {
     my $b = $] > 5.008 ? "-qq,$backend" : "$backend";
     system "$runperl -Iblib/arch -Iblib/lib -MO=$b,-o$name.c $name.pl";
     unless (-e "$name.c") {
-        print "not ok 1 #B::$backend failed\n";
+        print "not ok $num #B::$backend failed\n";
         exit;
     }
     system "$runperl -Iblib/arch -Iblib/lib blib/script/cc_harness -q -o$name $name.c";
@@ -683,6 +657,7 @@ sub ctest {
         } else {
             ok(undef, "failed to compile");
         }
+        return;
     }
     $exe = "./".$exe unless $^O eq 'MSWin32';
     ($result,$out,$stderr) = run_cmd($exe, 5);
@@ -750,6 +725,67 @@ sub ccompileok {
     if ($ok) {
         unlink($name, "$name.c", "$name.exe");
     }
+}
+
+sub todo_tests_default {
+    my $what = shift;
+    my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
+    my $ITHREADS  = ($Config{useithreads});
+
+    my @todo  = (15,41..43,46); # 8,14-16 fail on 5.00505 (max 20 then)
+    push @todo, (103)  if $] < 5.007 or $] >= 5.010;
+    push @todo, (29)   if $] >= 5.010 and !$DEBUGGING;
+    push @todo, (29)   if $] >= 5.013006;
+    #push @todo, (15) if !$ITHREADS;
+    # 15 passes on cygwin XP, but fails on cygwin Win7
+    if ($what =~ /^c(|_o[1-4])$/) {
+        # 14+23 fixed with 1.04_29, for 5.10 with 1.04_31
+        # 15+28 fixed with 1.04_34
+        # 5.6.2 CORE: 8,15,16,22. 16 fixed with 1.04_24, 8 with 1.04_25
+        # 5.8.8 CORE: 11,14,15,20,23 / non-threaded: 5,7-12,14-20,22-23,25
+        # @todo = (15,35,39,44,46)    if $] < 5.010;
+        # fixed with 1.30
+        # push @todo, (45)   if $] > 5.007;
+        # fixed with 1.30
+        # push @todo, (39)   if $] > 5.007 and $] < 5.009;
+        # fixed with 1.30
+        # push @todo, (21)   if $] > 5.011 and $] < 5.013;
+        push @todo, (28)   if $what !~ /c_o[13]/; # -O2 wrong alignment in free
+        push @todo, (21)   if $] > 5.011 and $] <= 5.013006;
+        push @todo, (25)   if $] =~ /5\.012/ and $DEBUGGING and $ITHREADS; # linux only
+        # c.t fixed with 1.30
+        push @todo, (16,29,44,45) if $] > 5.013 and !$DEBUGGING and !$ITHREADS;
+        push @todo, (12,16)if $what =~ /c_o[234]/ and $] >= 5.010;;
+        push @todo, (44,45) if $what =~ /c_o[123]/;
+
+        push @todo, (19)    if $what eq 'c_o2' and $ITHREADS;
+	push @todo, (10,12,19,25) if $what eq 'c_o4';
+    } elsif ($what =~ /^cc/) {
+        # 8,11,14..16,18..19 fail on 5.00505 + 5.6, old core failures (max 20)
+        # on cygwin 29 passes
+        push @todo, (35); # fixed 44 -nt
+        push @todo, (21,30,45); #5.8.9
+        push @todo, (44)    if $ITHREADS or $] < 5.012;
+        push @todo, (44)    if !$ITHREADS and $] >= 5.012;
+        push @todo, (105)   if $what =~ /^cc(_o1)?/ or ($] > 5.008005 and $] < 5.010);
+        push @todo, (10,16) if $what eq 'cc_o2';
+        push @todo, (104)   if $] < 5.007; # leaveloop, no cxstack
+        push @todo, (28,39,103,105) if $] > 5.007 and $] < 5.009;
+        #push @todo, (11,27) if $] < 5.009;
+        push @todo, (14)    if $] >= 5.010 and $^O !~ /MSWin32|cygwin/i;
+        # solaris also. I suspected nvx<=>cop_seq_*
+        push @todo, (12)    if $^O eq 'MSWin32' and $Config{cc} =~ /^cl/i;
+        #push @todo, (3,4,27,42,43) if $] >= 5.011004 and $ITHREADS;
+        push @todo, (26)    if $what =~ /^cc_o[12]/;
+        push @todo, (15)    if ($] >= 5.012 or $] < 5.010) and $ITHREADS;
+        push @todo, (25)    if $] >= 5.011004 and $DEBUGGING and $ITHREADS;
+        push @todo, (3,4)   if $] >= 5.011004 and $ITHREADS;
+        #push @todo, (16)    if $] >= 5.013009;
+    }
+    push @todo, (25)   if $] eq "5.010001" and !$DEBUGGING and $ITHREADS;
+    push @todo, (25)   if $] >= 5.010 and $] < 5.012 and !$ITHREADS;
+    #push @todo, (32)  if $] >= 5.011003;
+    return @todo;
 }
 
 1;

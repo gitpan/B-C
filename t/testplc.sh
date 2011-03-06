@@ -29,6 +29,9 @@ QOCMD="$PERL $Mblib -MO=-qq,Bytecode,"
 ICMD="$PERL $Mblib -MByteLoader"
 if [ "$D" = "256" ]; then QOCMD=$OCMD; fi
 if [ "$Mblib" = " " ]; then VERS="${VERS}_global"; fi
+v513="`$PERL -e'print (($] < 5.013005) ? q() : q(-fno-fold,-fno-warnings,))'`"
+OCMD=${OCMD}${v513}
+QOCMD=${QOCMD}${v513}
 
 }
 
@@ -118,6 +121,8 @@ function btest {
     [ -n "$Q" ] || echo ${OCMD}-o${o}.plc ${o}.pl
     ${OCMD}-o${o}.plc ${o}.pl || (test -z $CONT && exit)
   fi
+  [ -n "$Q" ] || echo $PERL $Mblib script/disassemble ${o}.plc -o ${o}.disasm
+  $PERL $Mblib script/disassemble ${o}.plc > ${o}.disasm
   [ -n "$Q" ] || echo ${ICMD} ${o}.plc
   res=$(${ICMD} ${o}.plc)
   if [ "X$res" = "X${result[$n]}" ]; then
@@ -133,7 +138,7 @@ function btest {
   fi
 }
 
-ntests=46
+ntests=49
 declare -a tests[$ntests]
 declare -a result[$ntests]
 tests[1]="print 'hi'"
@@ -244,7 +249,7 @@ tests[38]='for(1 .. 1024) { if (open(my $null_fh,"<","/dev/null")) { seek($null_
 result[38]='ok'
 # check re::is_regexp, and on 5.12 if being upgraded to SVt_REGEXP
 usere="`$PERL -e'print (($] < 5.011) ? q(use re;) : q())'`"
-tests[39]=$usere'$a=qr/x/;print ($] < 5.007?1:re::is_regexp($a))'
+tests[39]=$usere'$a=qr/x/;print ($] < 5.010?1:re::is_regexp($a))'
 result[39]='1'
 # => Undefined subroutine &re::is_regexp with B-C-1.19, even with -ure
 # String with a null byte -- used to generate broken .c on 5.6.2 with static pvs
@@ -272,9 +277,17 @@ result[45]='ok'
 # Exporter should end up in main:: stash when used in
 tests[46]='use Exporter; if (exists $main::{"Exporter::"}) { print "ok"; }'
 result[46]='ok'
-# issue27
-tests[47]='require LWP::UserAgent; print q(ok);'
+# non-tied av->MAGICAL
+tests[47]='@ISA=(q(ok));print $ISA[0];'
 result[47]='ok'
+#-------------
+# issue27
+tests[48]='require LWP::UserAgent;print q(ok);'
+result[48]='ok'
+# issue24
+tests[49]='dbmopen(%H,q(f),0644);print q(ok);'
+result[49]='ok'
+
 
 init
 
