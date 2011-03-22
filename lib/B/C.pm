@@ -10,7 +10,7 @@
 
 package B::C;
 
-our $VERSION = '1.30';
+our $VERSION = '1.31';
 my %debug;
 
 package B::C::Section;
@@ -268,6 +268,7 @@ my @xpvav_sizes;
 my ($max_string_len, $in_endav);
 my %static_core_pkg; #= map {$_ => 1} static_core_packages();
 
+my $MULTI = $Config{usemultiplicity};
 my $ITHREADS = $Config{useithreads};
 my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
 my $PERL513  = ( $] >= 5.013002 );
@@ -954,6 +955,9 @@ sub B::SVOP::save {
     $cv->save if $cv;
   }
   my $is_const_addr = $svsym =~ m/Null|\&/;
+  if ($MULTI and $svsym =~ /\(SV\*\)\&PL_sv_(yes|no)/) { # t/testm.sh Test::Pod
+    $is_const_addr = 0;
+  }
   $svopsect->comment("$opsect_common, sv");
   $svopsect->add(
     sprintf( "%s, %s",
@@ -1120,7 +1124,7 @@ sub B::PMOP::save {
   my $gvsym;
   my $ppaddr = $op->ppaddr;
 
-  # under ithreads, OP_PUSHRE.op_replroot is an integer
+  # under ithreads, OP_PUSHRE.op_replroot is an integer. multi not.
   $replrootfield = sprintf( "s\\_%x", $$replroot ) if ref $replroot;
   if ( $ITHREADS && $op->name eq "pushre" ) {
     $replrootfield = "INT2PTR(OP*,${replroot})";
@@ -1182,10 +1186,10 @@ sub B::PMOP::save {
         ${ $op->last },    $replrootfield,
         $replstartfield,   $ITHREADS ? $op->pmoffset : 0,
         $op->pmflags,      $op->pmpermflags,
-        $op->pmdynflags,   $ITHREADS ? cstring($op->pmstashpv) : "0"
+        $op->pmdynflags,   $MULTI ? cstring($op->pmstashpv) : "0"
       )
     );
-    if (!$ITHREADS and $op->pmstash) {
+    if (!$MULTI and $op->pmstash) {
       my $stash = $op->pmstash->save;
       $init->add( sprintf( "pmop_list[%d].op_pmstash = %s;", $pmopsect->index, $stash ) );
     }
@@ -1700,7 +1704,7 @@ sub B::PVMG::save {
         # comppadnames needs &PL_sv_undef instead of 0
 	# But threaded PL_sv_undef => my_perl->Isv_undef, and my_perl is not available static
 	if (!$pv or !$savesym or $savesym eq 'NULL') {
-	  if ($ITHREADS) {
+	  if ($MULTI) {
 	    $savesym = "NULL";
 	    $init->add( sprintf( "sv_list[%d].sv_u.svu_pv = (char*)&PL_sv_undef;",
 				 $svsect->index ) );
@@ -2411,7 +2415,7 @@ sub B::CV::save {
     		  $$gv, $$cv) if $debug{cv};
   }
   unless ($optimize_cop) {
-    if ($ITHREADS) {
+    if ($MULTI) {
       $init->add( savepvn( "CvFILE($sym)", $cv->FILE ) );
     }
     else {
@@ -3006,7 +3010,7 @@ sub B::IO::save_data {
   $init->add( "GvSVn( $sym ) = (SV*)$ref;");
 
   # XXX 5.10 non-threaded crashes at this eval_pv. 5.11 crashes threaded. test 15
-  #if (!$PERL510 or $ITHREADS) {   # or ($PERL510 and !$PERL511)
+  #if (!$PERL510 or $MULTI) {   # or ($PERL510 and !$PERL511)
   $use_xsloader = 1 if !$PERL56; # for PerlIO::scalar
   $init->add_eval( sprintf 'open(%s, "<", $%s)', $globname, $globname );
   #}
@@ -3183,7 +3187,7 @@ sub output_all {
   print 'Static const char emptystring[] = "\0";',"\n";
   # newXS for core XS needs a filename
   print 'Static const char xsfile[] = "universal.c";',"\n";
-  if ($ITHREADS) {
+  if ($MULTI) {
     print "#define ptr_undef 0\n";
   } else {
     print "#define ptr_undef &PL_sv_undef\n";
@@ -3440,7 +3444,7 @@ sub init_op_warn {
     register int i;
     for( i = 0; i < ${num}; ++i )
     {
-        switch( (int)(${op_list}\[i].cop_warnings) )
+        switch( PTR2IV(${op_list}\[i].cop_warnings) )
         {
         case 1:
             ${op_list}\[i].cop_warnings = pWARN_ALL;
@@ -3550,8 +3554,8 @@ EOT
       if ($s =~ /^sv_list/) {
 	print "    SvPV_set(&$s, (char*)&PL_sv_undef);\n";
       } elsif ($s =~ /^cop_list/) {
-	print "    CopFILE_set(&$s, NULL);\n";
-	print "    CopSTASHPV_set(&$s, NULL);\n";
+	print "    CopFILE_set(&$s, NULL);\n" if $ITHREADS or !$MULTI;
+	print "    CopSTASHPV_set(&$s, NULL);\n" if $ITHREADS or !$MULTI;
       }
     }
     for (0 .. $hek_index-1) {
@@ -3818,7 +3822,7 @@ EOT
       $dollar_0 =~ s/\\/\\\\/g;
       $dollar_0 = '"' . $dollar_0 . '"';
 
-      print <<EOT;
+      print <<"EOT";
     if ((tmpgv = gv_fetchpv("0", TRUE, SVt_PV))) {/* $0 */
         tmpsv = GvSVn(tmpgv);
         sv_setpv(tmpsv, ${dollar_0});
@@ -3827,7 +3831,7 @@ EOT
 EOT
     }
     else {
-      print <<EOT;
+      print <<"EOT";
     if ((tmpgv = gv_fetchpv("0", TRUE, SVt_PV))) {/* $0 */
         tmpsv = GvSVn(tmpgv);
         sv_setpv(tmpsv, argv[0]);
@@ -3836,7 +3840,7 @@ EOT
 EOT
     }
 
-    print <<'EOT';
+    print <<"EOT";
     if ((tmpgv = gv_fetchpv("\030", TRUE, SVt_PV))) {/* $^X */
         tmpsv = GvSVn(tmpgv);
 #ifdef WIN32
@@ -4551,7 +4555,7 @@ OPTION:
   } elsif ($B::C::av_init2 and $B::C::av_init) {
     $B::C::av_init = 0;
   }
-  $B::C::save_data_fh = 1 if $] >= 5.008 and (($] < 5.009004) or $ITHREADS);
+  $B::C::save_data_fh = 1 if $] >= 5.008 and (($] < 5.009004) or $MULTI);
   $B::C::destruct = 1 if $] < 5.008;
   if ($B::C::pv_copy_on_grow and $PERL510 and $B::C::destruct) {
     warn "Warning: -fcog / -O1 static PV copy-on-grow disabled.\n";

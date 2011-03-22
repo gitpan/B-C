@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # t/testc.sh -c -Du,-q -B static 2>&1 |tee c.log|grep FAIL
 # for p in 5.6.2 5.8.8-nt 5.8.9d 5.10.1d 5.10.1d-nt 5.11.2d 5.11.2d-nt; do make -s clean; echo perl$p; perl$p Makefile.PL; t/testc.sh -q -O0 31; done
 # quiet c only: t/testc.sh -q -O0
@@ -406,7 +406,8 @@ do
     OCMD="$(echo $OCMD|sed -r -e 's/(-D.*)u,/\1o,/')" 
   fi
 done
-CCMD="$CCMD -g3"
+
+test "$(perl -V:gccversion)" = "gccversion='';" || CCMD="$CCMD -g3"
 if [ -z $OPTIM ]; then OPTIM=-1; fi # all
 
 if [ -z "$QUIET" ]; then
@@ -420,7 +421,8 @@ else
     OCMDO2="$(echo $OCMDO2|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
     OCMDO3="$(echo $OCMDO3|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
     OCMDO4="$(echo $OCMDO4|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
-    make --silent >/dev/null
+    # gnu make?
+    make --silent >/dev/null || make 2&>1 >/dev/null
 fi
 
 # need to shift the options

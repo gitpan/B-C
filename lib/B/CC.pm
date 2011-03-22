@@ -238,7 +238,7 @@ Add Flags info to the code.
 
 package B::CC;
 
-our $VERSION = '1.09';
+our $VERSION = '1.10';
 
 use Config;
 use strict;
@@ -327,6 +327,7 @@ my %async_signals = map { $_ => 1 } # 5.14 ops which do PERL_ASYNC_CHECK
   qw(wait waitpid nextstate and cond_expr unstack or subst dorassign);
 # perl patchlevel to generate code for (defaults to current patchlevel)
 my $patchlevel = int( 0.5 + 1000 * ( $] - 5 ) );    # XXX unused?
+my $MULTI      = $Config{usemultiplicity};
 my $ITHREADS   = $Config{useithreads};
 my $PERL510    = ( $] >= 5.009005 );
 my $PERL511    = ( $] >= 5.011 );
@@ -440,7 +441,7 @@ sub output_runtime {
   # 5.6.2 not, 5.8.9 not. coverage 32
 
   # test 12. Used by entereval + dofile
-  if ($PERL510 or $ITHREADS) {
+  if ($PERL510 or $MULTI) {
     # Threads error Bug#55302: too few arguments to function
     # CALLRUNOPS()=>CALLRUNOPS(aTHX)
     # fixed with 5.11.4

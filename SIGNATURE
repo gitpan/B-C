@@ -1,5 +1,5 @@
 This file contains message digests of all files listed in MANIFEST,
-signed via the Module::Signature module, version 0.66.
+signed via the Module::Signature module, version 0.61.
 
 To verify the content in this distribution, first make sure you have
 Module::Signature installed, then type:
@@ -46,10 +46,10 @@ SHA1 f8e20b09aaf9072a95c166b455a7fc09f75a8390 ByteLoader/bytecode.h
 SHA1 18658ac717115e094abec65cdc2a82ccd8be2a86 ByteLoader/hints/sunos.pl
 SHA1 6f942a3aa4b7201650bbc0cc2a3b3b6ca3b6a14c ByteLoader/ppport.h
 SHA1 da5cb23d52fee871606674d7e9cfdecc5d4c2891 C.xs
-SHA1 09b3618a7b2d2cff0241d2a6dd04db6861d50483 Changes
+SHA1 30172785e95dfc7d69b1c78887b3287f1c9458f2 Changes
 SHA1 c0bf1a619a3a61a05da7ec8a9845e48fa4511c97 Copying
 SHA1 103425629fa27c7fc5b7c15bab5b8a1a1553d9a6 MANIFEST
-SHA1 e62cfc3486fbbbcf192e1e57828c813d525294f7 META.yml
+SHA1 c24b833116377661dd9fec9f653c70ac00f31d1f META.yml
 SHA1 bd0f31d44d2cee00f1ad42403c44f89d0787f8fc Makefile.PL
 SHA1 e4c8c6c4b92f9adfe679119c35c7081071e0f52a NOTES
 SHA1 9fb716a4725c4c676898e7ed0fe887340d35c493 README
@@ -64,8 +64,8 @@ SHA1 ab21a62f3244f5cb5ae02262175c6ef5bbdcd2d7 hints/openbsd.pl
 SHA1 6514e6bf30491b6bd0deda45ce58716b4ee9dc25 lib/B/Assembler.pm
 SHA1 0db27500f0f54089eda2b2573925ec684afc3ae2 lib/B/Bblock.pm
 SHA1 79cd187d5842053bccfd391b280bae7d9a52809d lib/B/Bytecode.pm
-SHA1 3315033c368f93819e785544d732da96bad9e8d1 lib/B/C.pm
-SHA1 f8102e8e6946b58dc5a0c9fcecfb1e3af5e8f1f5 lib/B/CC.pm
+SHA1 358e59c6fe2a3563b5348b97a51a42e0827fa82a lib/B/C.pm
+SHA1 41c6ed9b8adee46e3c844c6980e8a5322c64a9c7 lib/B/CC.pm
 SHA1 ab3cf971b73c225d374bff60d94cbb6b7b4d4843 lib/B/Disassembler.pm
 SHA1 cd9c3c1b5f4f65eec117e9d94df451a78ac547f6 lib/B/Stackobj.pm
 SHA1 d91703780010917a06bc705ef67aff1498b159b2 lib/B/Stash.pm
@@ -81,7 +81,7 @@ SHA1 6ed746556d9c5b9b58ecbb4fc1e1848b0e4b5eab ramblings/runtime.porting
 SHA1 c16985512afcf5e1972e0c5d53afdd27bcc64fa4 ramblings/yapc_bratislava08.pod
 SHA1 f87069db552c9ad91fea8affc02537b4779d7ab7 regen_lib.pl
 SHA1 ce19f7e77196767cf94a570f126070a8bbb25462 script/assemble
-SHA1 2916ebdefc68f15ca633d301df2735c08d54497e script/cc_harness
+SHA1 4ce081271c48d593437cb1998fed078cd5ddf0d5 script/cc_harness
 SHA1 eea874d4b4f2d6b61b94541452a4d2ab018031dc script/disassemble
 SHA1 bc2d02317447305b119d6c1aad1e4ee7a7224490 script/perlcc.PL
 SHA1 ad63f9562eeb3b5ae51f2d7a6917da7800100e32 script/pl2exe.pl
@@ -104,11 +104,11 @@ SHA1 5bb2ddca63acd38e4d184f7d573fe883db36c0c5 t/cc_o1.t
 SHA1 6e3848c4fe80c41c5bc8ee104a6861d7e59d44c5 t/cc_o2.t
 SHA1 d004f3e465669f63f98c0b13037e3a4bc3c98e20 t/e_perlcc.t
 SHA1 6167ee3f5433e36573a7f74f673f0ce0135f654b t/issue24.t
-SHA1 d6d51385cee31b6e47e920bfe0281d035de9dff3 t/issue27.t
+SHA1 809f12f15532583962259a453903b29e759e5a12 t/issue27.t
 SHA1 6b3eeba5fab335f1b00aadcfd58575d8cbf23f51 t/issue29.t
 SHA1 90f5562bf9dd7d7d311cfb121204fe685cd2d423 t/issue31.t
-SHA1 97df47c88579fabbaeda56b195a8f61d2fe33153 t/issue34.t
-SHA1 5374483c5650e17f059878b8b12769a2c16efb73 t/issue35.t
+SHA1 2a058d08b78f7a870073c53030d7f987cae7e07f t/issue34.t
+SHA1 15807ed9ba2a38d4be75139e1f806590d777fffd t/issue35.t
 SHA1 670531de0211248e20f83856a60303a091900b9f t/issue36.t
 SHA1 f761cc03651ea44f2ec7d6128baf622da76e3d5a t/issue37.t
 SHA1 87c84cb5f957e43d094743f97c8e0c5932f5c118 t/issue38.t
@@ -124,15 +124,15 @@ SHA1 aa2e45b1161c56c6d8f7efb7d802d9433ede66e1 t/issue50.t
 SHA1 b8629b8449fd0b91386ce3d9ce6ba460c722265d t/issue51.t
 SHA1 ecef1f54f2a078e33052416a5559306f15b262f4 t/issue52.t
 SHA1 a3e8f0fe0fd4ce4f25124f339ec1c815f6a126d7 t/issue54.t
-SHA1 68ea4d6f47ea59d2fd5751529f18a9d1e6eef57a t/modules.pm
-SHA1 48b0b8e69b0921af02662f18d25c6acbc034dcaf t/modules.t
+SHA1 f83f4145e1484327920491ba12fb0cb7e79c8320 t/modules.pm
+SHA1 588f5cfcf0887c85ec0b8b06599f51885db5e41c t/modules.t
 SHA1 00591d481917c7bfc7f034ad97ee1b7624314663 t/mymodules
 SHA1 e83e0adfc49a710067b62ff89b2a459337af15b9 t/o.t
 SHA1 574e737f00a07cac0168c8048fd0d6d239b29f03 t/qr_loaded_module.pm
 SHA1 6e0c4f878337e8c292634a3610fae284619989f6 t/stash.t
-SHA1 5d6756fe4b8e6ab88671748e52d54861e9ba1fb7 t/test.pl
-SHA1 44d72d74e26c8639317b8beff3bcf40f3c6860ed t/testc.sh
-SHA1 44d72d74e26c8639317b8beff3bcf40f3c6860ed t/testcc.sh
+SHA1 dbc95c49599f1489ffec645178bf90e903667ab3 t/test.pl
+SHA1 820a7ce71be183c692cdec41f045bfc81a7912d6 t/testc.sh
+SHA1 820a7ce71be183c692cdec41f045bfc81a7912d6 t/testcc.sh
 SHA1 abc87e1ef5d6204de962024b445aa2a49fc0fadc t/testcore.t
 SHA1 eda9acc9a1e57dec65eb43bca563512901ec6c58 t/testm.sh
 SHA1 da5b6ae37bd4d4dc468c26e58cee24d9da74dbab t/testplc.sh
@@ -142,7 +142,7 @@ SHA1 104f840b6b50effa3b3aa37222e735bc52573023 typemap
 -----BEGIN PGP SIGNATURE-----
 Version: GnuPG v1.4.9 (Cygwin)
 
-iEYEARECAAYFAk1z1i0ACgkQmm2SYo/9yULMNACeO7sMh/kI8cm5HVRl+niVxhKQ
-ScAAnj7DvsjNbQoa/9lrZHcmKxwdpEvW
-=Vf2w
+iEYEARECAAYFAk2Hp6MACgkQmm2SYo/9yUIZFACdHQbG10LjrSEfl7uuGvN5GeTD
+ON0AnjlLclnkpVizIzqx+tn8zE1rjGmb
+=7alb
 -----END PGP SIGNATURE-----
