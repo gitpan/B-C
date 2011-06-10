@@ -83,12 +83,13 @@ sub log_err {
 }
 
 sub is_subset {
+  return 0 if grep /^-no-subset$/, @ARGV;
   return ! -d '.svn' || grep /^-subset$/, @ARGV;
 }
 
 sub get_module_list {
   # Parse for command line modules and use this if seen.
-  my @modules = grep {$_ !~ /^-(all|log|subset|t)$/} @ARGV; # Parse out -all var.
+  my @modules = grep {$_ !~ /^-([\w-]+)$/} @ARGV; # ignore options
   my $module_list  = 't/top100';
   if (@modules and -e $modules[0] and ! -x $modules[0]) { # skip an executable compiled module
     $module_list = $modules[0];
@@ -112,7 +113,7 @@ sub get_module_list {
     open (SAVEOUT, ">&STDERR");
     close STDERR;
     open (STDERR, ">", \$modules::saveout);
-    if (eval "require $m; 1;" || $m eq 'if' ) {
+    if (eval "require $m;" or $m eq 'if') {
       $modules{$m} = 1;
     }
     # restore stderr
@@ -121,8 +122,8 @@ sub get_module_list {
     close SAVEOUT;
   }
 
-  if (&is_subset) {
-    log_diag("testing a random subset of the top100 modules");
+  if (&is_subset and @modules > 10) {
+    log_diag("testing a random subset of the $module_list modules");
     @modules = random_sublist(@modules);
   }
 
@@ -132,9 +133,10 @@ sub get_module_list {
 sub random_sublist {
   my @modules = @_;
   my %sublist;
+  return 1 if scalar(@modules) < 2;
   while (keys %sublist < 10) {
     my $m = $modules[int(rand(scalar @modules))];
-    next unless $modules{$m}; # Don't random test uninstalled module
+    next unless $modules{$m}; # Don't random test uninstalled modules
     $sublist{$m} = 1;
   }
   return keys %sublist;
@@ -186,7 +188,7 @@ sub testcc   {
     my $cwd = Cwd::getcwd();
     # posix shell only, but we are using a posix shell here. XXX -Wb=-uTest::Builder
     my $X = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
-    $self->prefs->{test}->{commandline} = "for t in t/*.t; do echo \"# \$t\"; $X -I\"$cwd/blib/arch\" -I\"$cwd/blib/lib\" \"$cwd/blib/script/perlcc\" -T -r --staticxs \$t; done";
+    $self->prefs->{test}->{commandline} = "for t in t/*.t; do echo \"# \$t\"; $X -Iblib/arch -Iblib/lib -I\"$cwd/blib/arch\" -I\"$cwd/blib/lib\" \"$cwd/blib/script/perlcc\" -T -r \$t; done";
     $self->prefs->{test_report} = ''; # XXX ignored!
     $self->{make_test} = 'NO'; # override YAML check "Has already been tested successfully"
     $self->test(@_);

@@ -8,23 +8,25 @@ use Config;
 
 my $usedl = $Config{usedl} eq 'define';
 my $X = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
-my $exe = $^O =~ /MSWin32|cygwin/ ? 'a.exe' : 'a.out';
+my $exe = $^O =~ /MSWin32|cygwin|msys/ ? 'a.exe' : 'a.out';
 my $a   = $^O eq 'MSWin32' ? 'a.exe' : 'a';
 my $redir = $^O eq 'MSWin32' ? '' : '2>&1';
 #my $o = '';
 #$o = "-Wb=-fno-warnings" if $] >= 5.013005;
 #$o = "-Wb=-fno-fold,-fno-warnings" if $] >= 5.013009;
-my $perlcc = "$X -Mblib blib/script/perlcc";
+my $perlcc = $] < 5.008
+  ? "$X -Iblib/arch -Iblib/lib blib/script/perlcc"
+  : "$X -Mblib blib/script/perlcc";
 sub cleanup { unlink ('a.out.c', "a.c", $exe, $a, "a.out.c.lst", "a.c.lst"); }
 my $e = q("print q(ok)");
 
 is(`$perlcc -S -o a -r -e $e`, "ok", "-S -o a -r -e");
-ok(-e 'a.out.c', "-S => a.out.c file");
+ok(-e 'a.c', "-S => a.c file");
 ok(-e $a, "keep a executable");
 cleanup;
 
 is(`$perlcc -o a -r -e $e`, "ok", "-o a r -e");
-ok(! -e 'a.out.c', "no a.out.c file");
+ok(! -e 'a.c', "no a.c file");
 ok(-e $a, "keep a executable"); # 6
 cleanup;
 
@@ -44,7 +46,7 @@ is(`$perlcc -r -e $e`, "ok", "-r xs ".($usedl ? "dynamic" : "static"));
 cleanup;
 
 TODO: {
-  local $TODO = '--staticxs is experimental'; # fails 5.8 only
+  local $TODO = '--staticxs is experimental'; # fails 5.8 and darwin only
   is(`$perlcc --staticxs -r -e $e`, "ok", "-r --staticxs xs"); #13
   ok(-e $exe, "keep executable"); #14
 }
@@ -58,13 +60,13 @@ TODO: {
      "-S -o -r --staticxs xs"); #17
   ok(-e $a, "keep executable"); #18
 }
-ok(-e 'a.out.c', "keep a.out.c file with -S");
-ok(-e 'a.out.c.lst', "keep a.out.c.lst with -S");
+ok(-e 'a.c', "keep a.c file with -S");
+ok(-e 'a.c.lst', "keep a.c.lst with -S");
 cleanup;
 
 is(`$perlcc --staticxs -S -o a -r -e "print q(ok)"`, "ok",
    "-S -o -r --staticxs without xs");
-ok(! -e 'a.out.c.lst', "no a.out.c.lst without xs");
+ok(! -e 'a.c.lst', "no a.c.lst without xs");
 cleanup;
 
 my $f = "a.pl";
@@ -129,14 +131,14 @@ cleanup;
 isnt(`$perlcc --Wb=-fno-fold,-v -o a $f $redir`, '/Writing output/m',
      "--Wb=-fno-fold,-v -o file");
 TODO: {
-  local $TODO = "catch STDERR not STDOUT";# fails freebsd only
+  local $TODO = "catch STDERR not STDOUT"; # fails freebsd only
   like(`$perlcc -B --Wb=-DG,-v -o a $f $redir`, "/-PV-/m",
        "-B -v5 --Wb=-DG -o file"); #51
 }
 cleanup;
 is(`$perlcc -Wb=-O1 -r $f`, "ok", "old-style -Wb=-O1");
 
-# perlcc must be verbose
+# perlcc verboseness
 isnt(`$perlcc -v 1 -o a $f`, "", "-v 1 -o file");
 isnt(`$perlcc -v1 -o a $f`, "", "-v1 -o file");
 isnt(`$perlcc -v2 -o a $f`, "", "-v2 -o file");
@@ -185,7 +187,7 @@ is(`$perlcc -B -oa.plc -e$e`, "", "-B -o -e");
 ok(-e 'a.plc', "a.plc");
 TODO: {
   local $TODO = 'yet unsupported 5.6' if $] < 5.007;
-  is(`$X -Mblib a.plc`, "ok", "executable plc"); #76
+  is(`$X -Iblib/arch -Iblib/lib a.plc`, "ok", "executable plc"); #76
 }
 cleanup;
 

@@ -22,8 +22,8 @@ D="`$PERL -e'print (($] < 5.007) ? q(256) : q(v))'`"
 
 function init {
 # test what? core or our module?
-#Mblib="`$PERL -e'print (($] < 5.008) ? q() : q(-Mblib))'`"
-Mblib=${Mblib:--Mblib} # B::C is now fully 5.6+5.8 backwards compatible
+Mblib="`$PERL -e'print (($] < 5.008) ? q() : q(-Mblib))'`"
+#Mblib=${Mblib:--Mblib} # B::C is now fully 5.6+5.8 backwards compatible
 OCMD="$PERL $Mblib -MO=Bytecode,"
 QOCMD="$PERL $Mblib -MO=-qq,Bytecode,"
 ICMD="$PERL $Mblib -MByteLoader"
@@ -36,20 +36,13 @@ QOCMD=${QOCMD}${v513}
 }
 
 function pass {
-    #echo -n "$1 PASS "
-    echo -e -n "\e[1;32mPASS \e[0;0m"
-    #shift
+    echo -e -n "\033[1;32mPASS \033[0;0m"
     echo $*
-    echo
 }
 function fail {
-    #echo -n "$1 FAIL "
-    echo -e -n "\e[1;31mFAIL \e[0;0m"
-    #shift
+    echo -e -n "\033[1;31mFAIL \033[0;0m"
     echo $*
-    echo
 }
-
 function bcall {
     o=$1
     opt=${2:-s}
@@ -65,6 +58,7 @@ function btest {
       if [ "$n" = "08" ]; then n=8; fi 
       if [ "$n" = "09" ]; then n=9; fi
       echo "${tests[${n}]}" > ${o}.pl
+      test -z "${tests[${n}]}" && exit
       str="${tests[${n}]}"
   else 
       echo "$2" > ${o}.pl
@@ -76,28 +70,55 @@ function btest {
   if [ -z "$SKIP" -o -n "$SKI" ]; then
     if [ "$Mblib" != " " ]; then 
 	bcall ${o} S,-s asm 1
+	bcall ${o} S,-k asm 1
+	bcall ${o} S,-i asm 1
     fi
   fi
   if [ "$Mblib" != " " -a -z "$SKIP" ]; then 
-    rm ${o}s_${VERS}.disasm ${o}_s_${VERS}.concise ${o}_s_${VERS}.dbg 2>/dev/null
+    m=${o}s_${VERS}
+    rm ${m}.disasm ${o}_${VERS}.concise ${o}_${VERS}.dbg 2>/dev/null
     bcall ${o} s
-    [ -n "$Q" ] || echo $PERL $Mblib script/disassemble ${o}s_${VERS}.plc \> ${o}_s_${VERS}.disasm
-    $PERL $Mblib script/disassemble ${o}s_${VERS}.plc > ${o}_s_${VERS}.disasm
-    #mv ${o}s_${VERS}.disasm ${o}_s_${VERS}.disasm
+    [ -n "$Q" ] || echo $PERL $Mblib script/disassemble $m.plc \> ${m}.disasm
+    $PERL $Mblib script/disassemble $m.plc > ${m}.disasm
+    [ -n "$Q" ] || echo ${ICMD} ${m}.plc
+    res=$(${ICMD} ${m}.plc)
+    if [ "X$res" != "X${result[$n]}" ]; then
+      fail "./${m}.plc" "'$str' => '$res' Expected: '${result[$n]}'"
+    fi
 
     # understand annotations
-    [ -n "$Q" ] || echo $PERL $Mblib script/assemble ${o}_s_${VERS}.disasm \> ${o}S_${VERS}.plc
-    $PERL $Mblib script/assemble ${o}_s_${VERS}.disasm > ${o}S_${VERS}.plc
+    m=${o}S_${VERS}
+    [ -n "$Q" ] || echo $PERL $Mblib script/assemble ${o}s_${VERS}.disasm \> $m.plc
+    $PERL $Mblib script/assemble ${o}s_${VERS}.disasm > $m.plc
     # full assembler roundtrips
-    [ -n "$Q" ] || echo $PERL $Mblib script/disassemble ${o}S_${VERS}.plc \> ${o}S_${VERS}.disasm
-    $PERL $Mblib script/disassemble ${o}S_${VERS}.plc > ${o}S_${VERS}.disasm
-    [ -n "$Q" ] || echo $PERL $Mblib script/assemble ${o}S_${VERS}.disasm \> ${o}SD_${VERS}.plc
-    $PERL $Mblib script/assemble ${o}S_${VERS}.disasm > ${o}SD_${VERS}.plc
-    [ -n "$Q" ] || echo $PERL $Mblib script/disassemble ${o}SD_${VERS}.plc \> ${o}SDS_${VERS}.disasm
-    $PERL $Mblib script/disassemble ${o}SD_${VERS}.plc > ${o}SDS_${VERS}.disasm
+    [ -n "$Q" ] || echo $PERL $Mblib script/disassemble $m.plc \> $m.disasm
+    $PERL $Mblib script/disassemble $m.plc > $m.disasm
+    md=${o}SD_${VERS}
+    [ -n "$Q" ] || echo $PERL $Mblib script/assemble $m.disasm \> ${md}.plc
+    $PERL $Mblib script/assemble $m.disasm > ${md}.plc
+    [ -n "$Q" ] || echo $PERL $Mblib script/disassemble ${md}.plc \> ${o}SDS_${VERS}.disasm
+    $PERL $Mblib script/disassemble ${md}.plc > ${o}SDS_${VERS}.disasm
+
+    bcall ${o} i
+    m=${o}i_${VERS}
+    $PERL $Mblib script/disassemble ${m}.plc > ${m}.disasm
+    [ -n "$Q" ] || echo ${ICMD} ${m}.plc
+    res=$(${ICMD} ${m}.plc)
+    if [ "X$res" = "X${result[$n]}" ]; then
+      pass "./${m}.plc" "=> '$res'"
+    else
+      fail "./${m}.plc" "'$str' => '$res' Expected: '${result[$n]}'"
+    fi
 
     bcall ${o} k
-    $PERL $Mblib script/disassemble ${o}k_${VERS}.plc > ${o}k_${VERS}.disasm
+    m=${o}k_${VERS}
+    $PERL $Mblib script/disassemble ${m}.plc > ${m}.disasm
+    [ -n "$Q" ] || echo ${ICMD} ${m}.plc
+    res=$(${ICMD} ${m}.plc)
+    if [ "X$res" != "X${result[$n]}" ]; then
+      fail "./${m}.plc" "'$str' => '$res' Expected: '${result[$n]}'"
+    fi
+
     [ -n "$Q" ] || echo $PERL $Mblib -MO=${qq}Debug,-exec ${o}.pl -o ${o}_${VERS}.dbg
     [ -n "$Q" ] || $PERL $Mblib -MO=${qq}Debug,-exec ${o}.pl > ${o}_${VERS}.dbg
   fi
@@ -110,6 +131,12 @@ function btest {
     if [ "$Mblib" != " " ]; then 
       #bcall ${o} TI
       bcall ${o} H
+      m="${o}H_${VERS}"
+      [ -n "$Q" ] || echo $PERL $Mblib ${m}.plc
+      res=$($PERL $Mblib ${m}.plc)
+      if [ "X$res" != "X${result[$n]}" ]; then
+          fail "./${m}.plc" "'$str' => '$res' Expected: '${result[$n]}'"
+      fi
     fi
   fi
   if [ "$Mblib" != " " ]; then
@@ -126,7 +153,7 @@ function btest {
   [ -n "$Q" ] || echo ${ICMD} ${o}.plc
   res=$(${ICMD} ${o}.plc)
   if [ "X$res" = "X${result[$n]}" ]; then
-      test "X$res" = "X${result[$n]}" && pass "./${o}.plc" "=> '$res'"
+      pass "./${o}.plc" "=> '$res'"
   else
       fail "./${o}.plc" "'$str' => '$res' Expected: '${result[$n]}'"
       if [ -z "$Q" ]; then
@@ -138,7 +165,7 @@ function btest {
   fi
 }
 
-ntests=49
+ntests=50
 declare -a tests[$ntests]
 declare -a result[$ntests]
 tests[1]="print 'hi'"
@@ -209,10 +236,10 @@ result[25]="0 1 2 3`$PERL -e'print (($] < 5.007) ? q( 4 5) : q())'` 4321";
 tests[26]='sub a:lvalue{my $a=26; ${\(bless \$a)}}sub b:lvalue{${\shift}}; print ${a(b)}';
 result[26]="26";
 # import test
-tests[27]='use Fcntl ();print "ok" if ( &Fcntl::O_WRONLY );'
+tests[27]='use Fcntl (); print "ok" if ( Fcntl::O_CREAT() >= 64 && &Fcntl::O_CREAT >= 64 );'
 result[27]='ok'
 # require test
-tests[28]='my($fname,$tmp_fh);while(!open($tmp_fh,">",($fname=q{cctest_27.} . rand(999999999999)))){$bail++;die "Failed to create a tmp file after 500 tries" if $bail>500;}print {$tmp_fh} q{$x="ok";1;};close($tmp_fh);sleep 1;require $fname;unlink($fname);print $x;'
+tests[28]='my($fname,$tmp_fh);while(!open($tmp_fh,">",($fname=q{cctest28_} . rand(999999999999)))){$bail++;die "Failed to create a tmp file after 500 tries" if $bail>500;}print {$tmp_fh} q{$x="ok";1;};close($tmp_fh);sleep 1;require $fname;unlink($fname);print $x;'
 result[28]='ok'
 # use test
 tests[29]='use IO;print "ok"'
@@ -280,13 +307,25 @@ result[46]='ok'
 # non-tied av->MAGICAL
 tests[47]='@ISA=(q(ok));print $ISA[0];'
 result[47]='ok'
+# END block del_backref
+tests[48]='my $s=q{ok};END{print $s}'
+result[48]='ok'
+# even this failed until r1000, overlarge AvFILL=3 endav
+#tests[48]='print q(ok);END{}'
+#result[48]='ok
+# no-fold
+tests[49]='print q(ok) if "test" =~ /es/i;'
+result[49]='ok'
+# @ISA issue 64
+tests[50]='package Top;sub top{q(ok)};package Next;our @ISA=qw(Top);package main;print Next->top();'
+result[50]='ok'
 #-------------
 # issue27
-tests[48]='require LWP::UserAgent;print q(ok);'
-result[48]='ok'
+tests[70]='require LWP::UserAgent;print q(ok);'
+result[70]='ok'
 # issue24
-tests[49]='dbmopen(%H,q(f),0644);print q(ok);'
-result[49]='ok'
+tests[71]='dbmopen(%H,q(f),0644);print q(ok);'
+result[71]='ok'
 
 
 init
@@ -321,7 +360,7 @@ if [ -n "$1" ]; then
     shift
   done
 else
-  for b in $(seq -f"%02.0f" $ntests); do
+  for b in $(seq $ntests); do
     btest $b
   done
 fi

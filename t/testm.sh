@@ -32,6 +32,7 @@ function help {
 PERL=`grep "^PERL =" Makefile|cut -c8-`
 PERL=${PERL:-perl}
 Mblib=-Mblib
+v513="`$PERL -e'print (($] < 5.013005) ? q() : q(-fno-fold,-fno-warnings))'`"
 
 function vcmd {
     test -n "$QUIET" || echo $*
@@ -39,22 +40,24 @@ function vcmd {
 }
 
 function pass {
-    echo -e -n "\e[1;32mPASS \e[0;0m"
+    echo -e -n "\033[1;32mPASS \033[0;0m"
     shift
     echo $*
     echo
 }
 function fail {
-    echo -e -n "\e[1;31mFAIL \e[0;0m"
+    echo -e -n "\033[1;31mFAIL \033[0;0m"
     shift
     echo $*
     echo
 }
-
-while getopts "hokltTsFD:O:f:q" opt
+[ -n "$v513" ] && PERLCC_OPTS="$PERLCC_OPTS -Wb=$v513"
+#PERLCC_OPTS=v513
+while getopts "hokltTsFD:O:f:qv" opt
 do
   if [ "$opt" = "o" ]; then Mblib=" "; init; fi
   if [ "$opt" = "q" ]; then QUIET=1; fi
+  if [ "$opt" = "v" ]; then QUIET=0; PERLCC_OPTS="$PERLCC_OPTS -v6"; fi
   if [ "$opt" = "k" ]; then KEEP="-S"; fi
   if [ "$opt" = "D" ]; then PERLCC_OPTS="$PERLCC_OPTS -Wb=-D${OPTARG}"; COPTS="$COPTS,-D${OPTARG}"; fi
   if [ "$opt" = "O" ]; then PERLCC_OPTS="$PERLCC_OPTS -Wb=-O${OPTARG}"; COPTS="$COPTS,-O${OPTARG}"; fi
@@ -66,7 +69,7 @@ do
       v=$($PERL -It -Mmodules -e'print perlversion')
       if [ -f log.modules-$v ]; then # and not older than a few days
 	  echo $PERL -S cpan `grep ^skip log.modules-$v | perl -anle 'print $F[1]'`
-          grep ^skip log.modules-$v | perl -anle 'print $F[1]' | xargs $PERL -S cpan
+          $PERL -S cpan $(grep ^skip log.modules-$v | perl -anle 'print $F[1]')
       else
 	  echo $PERL -S cpan $($PERL $Mblib -It -Mmodules -e'$,=" "; print skip_modules')
           $PERL -S cpan $($PERL $Mblib -It -Mmodules -e'$,=" "; print skip_modules')
@@ -76,8 +79,8 @@ do
   if [ "$opt" = "F" ]; then 
       v=$($PERL -It -Mmodules -e'print perlversion')
       if [ -f log.modules-$v ]; then # and not older than a few days
-	  echo $PERL -S cpan `grep ^fail log.modules-$v | perl -anle 'print $F[1]'`
-          grep ^fail log.modules-$v | perl -anle 'print $F[1]' | xargs $PERL t/testm.sh
+	  echo t/testm.sh `grep ^fail log.modules-$v | perl -anle 'print $F[1]'`
+          for m in $(grep ^fail log.modules-$v | perl -anle 'print $F[1]'); do t/testm.sh -q $m; done
       fi
       exit
   fi
@@ -93,32 +96,32 @@ fi
 # need to shift the options
 while [ -n "$1" -a "${1:0:1}" = "-" ]; do shift; done
 
-PERLCC_TIMEOUT=120
+PERLCC_TIMEOUT=360
 if [ -n "$1" ]; then
     if [ -f "$1" ]; then
 	# run a mymodules.t like test
 	$PERL $Mblib t/modules.t $TEST "$1"
     else
-        [ -z "$QUIET" ] && PERLCC_OPTS="$PERLCC_OPTS -v 4"
+        [ -z "$QUIET" ] && PERLCC_OPTS="$PERLCC_OPTS -v4"
 	while [ -n "$1" ]; do
 	    # single module. update,setup,install are UAC terms
 	    name="$(perl -e'$a=shift;$a=~s{::}{_}g;$a=~s{(install|setup|update)}{substr($1,0,4)}ie;print lc($a)' $1)"
 	    if [ "${COPTS/,-D/}" != "$COPTS" ]; then
               COPTS="${COPTS:1}"
-	      echo $PERL $Mblib -MO=C,$COPTS,-o$name.c -e "\"use $1; print 'ok'\""
-	      $PERL $Mblib -MO=C,$COPTS,-o$name.c -e "use $1; print 'ok'"
+	      echo $PERL $Mblib -MO=C,$COPTS,-o$name.c -e "\"use $1; print qq(ok\\n)\""
+	      $PERL $Mblib -MO=C,$COPTS,-o$name.c -e "use $1; print qq(ok\\n)"
 	      if [ -f $name.c ]; then
-		echo $PERL $Mblib script/cc_harness -d -g3 -o$name $name.c
-		$PERL $Mblib script/cc_harness -d -g3 -o$name $name.c
+		echo $PERL $Mblib script/cc_harness -d -g3 -o $name $name.c
+		$PERL $Mblib script/cc_harness -d -g3 -o $name $name.c
 		if [ -f $name ]; then
 		  echo "running ./$name"
 		  ./$name
 		fi
 	      fi
 	    else
-	      echo $PERL $Mblib blib/script/perlcc $PERLCC_OPTS -r $KEEP -e "\"use $1; print 'ok'\"" -o $name
-	      $PERL $Mblib blib/script/perlcc $PERLCC_OPTS -r $KEEP -e "use $1; print 'ok'" -o $name
-              test -f a.out.c && mv a.out.c $name.c
+	      echo $PERL $Mblib blib/script/perlcc $PERLCC_OPTS -r $KEEP -e "\"use $1; print qq(ok\\n)\"" -o $name
+	      $PERL $Mblib blib/script/perlcc $PERLCC_OPTS -r $KEEP -e "use $1; print qq(ok\\n)" -o $name
+              # test -f a.out.c && mv a.out.c $name.c
             fi
 	    [ -n "$TEST" ] && $PERL $Mblib -It -MCPAN -Mmodules -e"CPAN::Shell->testcc(q($1))"
 	    shift

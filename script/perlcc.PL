@@ -49,6 +49,7 @@ print OUT <<'!NO!SUBS!';
 # Version 2.08, Reini Urban, 2010-07-30 21:30:33
 # Version 2.09, Reini Urban, 2010-10-11 13:54:52
 # Version 2.10, Reini Urban, 2011-02-11 22:58:37
+# Version 2.11, Reini Urban, 2011-04-11 20:16:00
 
 use strict;
 use warnings;
@@ -63,7 +64,7 @@ use Cwd;
 use Pod::Usage;
 # Time::HiRes does not work with 5.6
 # use Time::HiRes qw(gettimeofday tv_interval);
-our $VERSION = 2.10;
+our $VERSION = 2.11;
 $| = 1;
 eval { require B::C::Flags; };
 
@@ -115,7 +116,6 @@ sub choose_backend {
     $Backend = 'CC' if opt(O);
 }
 
-
 sub generate_code {
 
     vprint 0, "Compiling $Input";
@@ -153,7 +153,7 @@ sub run_code {
         if ($^O =~ /^MSWin32|msys|cygwin$/) {
             $ENV{PATH} .= $path;
             vprint 0, "PATH=\$PATH$path";
-        } else {
+        } elsif ($^O ne 'darwin') {
             $ENV{LD_LIBRARY_PATH} .= $path;
             vprint 0, "LD_LIBRARY_PATH=\$LD_LIBRARY_PATH$path";
         }
@@ -206,6 +206,7 @@ sub parse_argv {
         $Options->{stash}++;
         @ARGV = grep !/^-stash$/, @ARGV;
     }
+    $Options->{spawn} = 1;
     Getopt::Long::GetOptions( $Options,
         'L=s',          # lib directory
         'I=s',          # include directories (FOR C, NOT FOR PERL)
@@ -229,6 +230,7 @@ sub parse_argv {
 	'log:s',        # where to log compilation process information
         'Wb:s',         # pass (comma-seperated) options to backend
         'testsuite',    # try to be nice to testsuite
+        'spawn!',	# --no-spawn
         'time',         # print benchmark timings
     );
 
@@ -377,7 +379,7 @@ sub compile_cstyle {
     }
     if (opt(S) || opt(c)) { # We need to keep it
         if (opt(e)) {
-            $cfile = "a.out.c";
+            $cfile = opt(o) ? opt(o).".c" : "a.out.c";
         } else {
             $cfile = basename($Input);
             # File off extension if present
@@ -387,6 +389,8 @@ sub compile_cstyle {
             $cfile = $Output if opt(c) && $Output =~ /\.c\z/i;
         }
         check_write($cfile);
+    } elsif (opt(o)) {
+        $cfile = opt(o).".c";
     } else { # Do not keep tempfiles (no -S nor -c)
         $lose = 1;
         ($cfh, $cfile) = tempfile("pccXXXXX", SUFFIX => ".c");
@@ -416,19 +420,43 @@ sub compile_cstyle {
         _die("$Input did not compile, which can't happen:\n@error\n");
     } else {
         my $i = substr($Input,0,2) eq '-e' ? '-e' : $Input;
-	@error = grep { !/^$i syntax OK$/o } @error;
-	warn "$0: Unexpected compiler output\n@error" if @error and opt(v)<5;
-	warn "@error" if @error and opt(v)>4;
+        @error = grep { !/^$i syntax OK$/o } @error;
+        warn "$0: Unexpected compiler output\n@error" if @error and opt(v)<5;
+        warn "@error" if @error and opt(v)>4;
     }
     vprint -1, "c time: $elapsed" if opt('time');
     $extra_libs = '';
     if ($staticxs and open(XS, "<", $cfile.".lst")) {
+        my $dylib;
         while (<XS>) {
             my ($s, $l) = m/^([^\t]+)(.*)$/;
             $stash .= ",-u$s";
-            $extra_libs .= " ".substr($l,1) if $l;
+            if ($l) {
+                $l = substr($l,1);
+                if ($^O eq 'darwin' and $l =~/\.bundle$/) {
+# XXX this does not work yet. file was built for unsupported file format 
+# which is not the architecture being linked (x86_64)
+                    $dylib = $l;
+                    $dylib =~ s/\.bundle$/.a/;
+                    $dylib =~ s{^.*/auto/}{};
+                    $dylib =~ s{/.+?(/[^/]+)}{$1};
+                    $dylib =~ s{/}{_}g;
+                    if (-e $dylib) {
+                        vprint 2, "Using static ".$dylib;
+                    } else {
+                        vprint 1, "Creating static ".$dylib;
+                        #my ($arch) = $Config{ldflags} =~ /-arch (\w+)/;
+                        #$arch = $arch ? " -arch_only $arch" : "";
+                        vprint 3, "libtool -static ".$l." -o ".$dylib;
+                        system("libtool","-static",$l,"-o",$dylib);
+                    }
+                    $l = "./".$dylib;
+                }
+                $extra_libs .= " ".$l;
+            }
         }
         close XS;
+        $extra_libs = " -L. -Wl,-search_paths_first $extra_libs" if $^O eq 'darwin' and $dylib;
         vprint 1, "staticxs $stash $extra_libs";
     }
 
@@ -504,7 +532,7 @@ sub cc_harness {
     }
     my $libperl = $Config{libperl};
     my $libdir  = $Config{prefix} . "/lib";
-    my $coredir = $ENV{PERL_SRC} || $Config{installarchlib}."/CORE";
+    my $coredir = $ENV{PERL_SRC} || $Config{archlib}."/CORE";
     if ($extra_libs) {
         # splice extra_libs after $Config{ldopts} before @archives
         my $i_ldopts = index($ldopts, $ldflags);
@@ -701,26 +729,28 @@ sub check_perl {
     if (/^#!/ && !/perl/) {
         _die("$file is a ", /^#!\s*(\S+)/, " script, not perl\n");
     }
-
 }
 
 # File spawning and error collecting
 sub spawnit {
     my ($command) = shift;
-    my (@error,@output);
-    my $errname;
-    (undef, $errname) = tempfile("pccXXXXX");
-    {
-	open (S_OUT, "$command 2>$errname |")
-	  or _die("Couldn't spawn the compiler.\n");
-	@output = <S_OUT>;
+    my (@error,@output,$errname);
+    if ($Options->{spawn}) {
+        (undef, $errname) = tempfile("pccXXXXX");
+        {
+	    open (S_OUT, "$command 2>$errname |")
+	      or _die("Couldn't spawn the compiler.\n");
+            @output = <S_OUT>;
+        }
+        open (S_ERROR, $errname) or _die("Couldn't read the error file.\n");
+        @error = <S_ERROR>;
+        close S_ERROR;
+        close S_OUT;
+        unlink $errname or _die("Can't unlink error file $errname\n");
+        return (\@output, \@error);
+    } else {
+        @output = split /\n/, `$command`;
     }
-    open (S_ERROR, $errname) or _die("Couldn't read the error file.\n");
-    @error = <S_ERROR>;
-    close S_ERROR;
-    close S_OUT;
-    unlink $errname or _die("Can't unlink error file $errname\n");
-    return (\@output, \@error);
 }
 
 sub helpme {
@@ -768,8 +798,7 @@ sub run {
     vprint -1, "r time: $elapsed" if opt('time');
 }
 
-sub interruptrun
-{
+sub interruptrun {
     my (@commands) = @_;
 
     my $command = join('', @commands);
@@ -785,16 +814,14 @@ sub interruptrun
 	  $Config{'osname'} ne 'MSWin32' &&
 	  $command =~ m"(^|\s)perlcc\s");
 
-    eval
-    {
+    eval {
          local($SIG{ALRM}) = sub { die "INFINITE LOOP"; };
          alarm($ENV{PERLCC_TIMEOUT}) if ($needalarm);
 	 $text = join('', <FD>);
 	 alarm(0) if ($needalarm);
     };
 
-    if ($@)
-    {
+    if ($@) {
         eval { kill 'HUP', $pid };
         vprint 0, "SYSTEM TIMEOUT (infinite loop?)\n";
     }
@@ -965,6 +992,11 @@ Currently only enabled for Bytecode and CC.
 =item --testsuite
 
   perlcc -r --testsuite t/harness
+
+=item --no-spawn
+
+Do not spawn subprocesses for compilation, because broken
+shells might not be able to kill its children.
 
 =back
 

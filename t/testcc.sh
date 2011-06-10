@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # t/testc.sh -c -Du,-q -B static 2>&1 |tee c.log|grep FAIL
 # for p in 5.6.2 5.8.8-nt 5.8.9d 5.10.1d 5.10.1d-nt 5.11.2d 5.11.2d-nt; do make -s clean; echo perl$p; perl$p Makefile.PL; t/testc.sh -q -O0 31; done
 # quiet c only: t/testc.sh -q -O0
@@ -35,11 +35,13 @@ if [ -z $Mblib ]; then
         OCMD="$PERL $Mblib -MO=CC,-DOsplt,"
     fi
 else
-    OCMD="$PERL $Mblib -MO=C,-DcoOSAHGCMpu,-v,"
+    OCMD="$PERL $Mblib -MO=C,-DsGCp,-v,"
     if [ $BASE = "testcc.sh" ]; then # DoOscprSql
-        OCMD="$PERL $Mblib -MO=CC,-DoOscpSql,-v,"
+        OCMD="$PERL $Mblib -MO=CC,-DOscpSql,-v,"
     fi
 fi
+v513="`$PERL -e'print (($] < 5.013005) ? q() : q(-fno-fold,-fno-warnings,))'`"
+OCMD=${OCMD}${v513}
 CONT=
 # 5.6: rather use -B static
 #CCMD="$PERL script/cc_harness -g3"
@@ -52,23 +54,16 @@ LCMD=
 
 function vcmd {
     test -n "$QUIET" || echo $*
-    #echo $*
     $*
 }
 
 function pass {
-    #echo -n "$1 PASS "
-    echo -e -n "\e[1;32mPASS \e[0;0m"
-    shift
+    echo -e -n "\033[1;32mPASS \033[0;0m"
     echo $*
-    echo
 }
 function fail {
-    #echo -n "$1 FAIL "
-    echo -e -n "\e[1;31mFAIL \e[0;0m"
-    shift
+    echo -e -n "\033[1;31mFAIL \033[0;0m"
     echo $*
-    echo
 }
 
 function runopt {
@@ -147,7 +142,7 @@ function ctest {
     fi
 }
 
-ntests=49
+ntests=50
 declare -a tests[$ntests]
 declare -a result[$ntests]
 ncctests=23
@@ -221,8 +216,8 @@ result[24]='ok'
 # enforce custom ncmp sort and count it. fails as CC in all. How to enforce icmp?
 # <=5.6 qsort needs two more passes here than >=5.8 merge_sort
 # 5.12 got it backwards and added 4 more passes.
-tests[25]='print sort { print $i++," "; $b <=> $a } 1..4'
-result[25]="0 1 2 3`$PERL -e'print (($] < 5.007) ? q( 4 5) : $] > 5.013 ? q( 4 5 6 7) : q())'` 4321";
+tests[25]='print sort { $i++; $b <=> $a } 1..4'
+result[25]="4321";
 # lvalue sub
 tests[26]='sub a:lvalue{my $a=26; ${\(bless \$a)}}sub b:lvalue{${\shift}}; print ${a(b)}';
 result[26]="26";
@@ -297,16 +292,25 @@ result[46]='ok'
 # non-tied av->MAGICAL
 tests[47]='@ISA=(q(ok));print $ISA[0];'
 result[47]='ok'
-# m//i
-tests[48]='print q(ok) if "test" =~ /es/i;'
+# END block del_backref with bytecode only
+tests[48]='my $s=q{ok};END{print $s}'
 result[48]='ok'
+# even this failed until r1000 (AvFILL 3 of END)
+#tests[48]='print q{ok};END{}'
+#result[48]='ok'
+# no-fold
+tests[49]='print q(ok) if "test" =~ /es/i;'
+result[49]='ok'
+# @ISA issue 64
+tests[50]='package Top;sub top{q(ok)};package Next;our @ISA=qw(Top);package main;print Next->top();'
+result[50]='ok'
 #-------------
 # issue27
-tests[49]='require LWP::UserAgent;print q(ok);'
-result[49]='ok'
+tests[70]='require LWP::UserAgent;print q(ok);'
+result[70]='ok'
 # issue24
-tests[50]='dbmopen(%H,q(f),0644);print q(ok);'
-result[50]='ok'
+tests[71]='dbmopen(%H,q(f),0644);print q(ok);'
+result[71]='ok'
 
 # from here on we test CC specifics only
 
@@ -434,11 +438,11 @@ if [ -n "$1" ]; then
     shift
   done
 else
-  for b in $(seq -f"%02.0f" $ntests); do
+  for b in $(seq $ntests); do
     ctest $b
   done
   if [ $BASE = "testcc.sh" ]; then
-    for b in $(seq -f"%02.0f" 101 $(($ncctests+100))); do
+    for b in $(seq 101 $(($ncctests+100))); do
       ctest $b
     done
   fi

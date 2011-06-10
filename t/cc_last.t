@@ -9,7 +9,7 @@ BEGIN {
 }
 my $base = "ccode_last";
 
-# XXX Bogus. This is not the real failure as described in the README
+# XXX Bogus. This is not the real 'last' failure as described in the README
 my $script1 = <<'EOF';
 # last outside loop
 label: {
@@ -22,7 +22,7 @@ EOF
 use B::CC;
 # 5.12 still fails test 1
 ctestok(1, "CC", $base, $script1,
-        ($B::CC::VERSION < 1.08 or $] =~ /5\.01[12]/ ? "last outside loop fixed with B-CC-1.08" : undef));
+       ($B::CC::VERSION < 1.08 or $] =~ m/5\.01[12]/ ? "last outside loop fixed with B-CC-1.08" : undef));
 
 my $script2 = <<'EOF';
 # Label not found at compile-time for last
@@ -38,7 +38,7 @@ ctestok(2, "CC", $base, $script2,
 
 # XXX TODO Bogus or already fixed by Heinz Knutzen for issue 36
 my $script3 = <<'EOF';
-# last for non-loop block is not yet implemented
+# last for non-loop block
 {
   print "ok";
   last;
@@ -46,7 +46,7 @@ my $script3 = <<'EOF';
 }
 EOF
 ctestok(3, "CC", $base, $script3,
-           $B::CC::VERSION < 1.08 ? "last for non-loop block fixed with B-CC-1.08" : undef);
+          $B::CC::VERSION < 1.08 ? "last for non-loop block fixed with B-CC-1.08" : undef);
 
 my $script4 = <<'EOF';
 # issue 55 segfault for non local loop exit
@@ -57,5 +57,6 @@ LOOP:
 }
 print "ok";
 EOF
+# TODO
 ctestok(4, "CC", $base, $script4,
-           $B::CC::VERSION < 1.10 ? "B::CC issue 55 non-local exit with last segv" : undef);
+           $B::CC::VERSION < 1.11 ? "B::CC issue 55 non-local exit with last => segv" : undef);

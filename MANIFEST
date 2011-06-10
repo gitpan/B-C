@@ -1,5 +1,5 @@
 Artistic
-cc_runtime514.h
+cc_runtime.h
 lib/B/Assembler.pm
 lib/B/Bblock.pm
 lib/B/Bytecode.pm
@@ -68,6 +68,7 @@ script/perlcc.PL
 script/pl2exe.pl
 STATUS
 status_upd
+store_rpt
 t/asmdata.t
 t/assembler.t
 t/bblock.t
