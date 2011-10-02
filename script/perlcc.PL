@@ -50,6 +50,7 @@ print OUT <<'!NO!SUBS!';
 # Version 2.09, Reini Urban, 2010-10-11 13:54:52
 # Version 2.10, Reini Urban, 2011-02-11 22:58:37
 # Version 2.11, Reini Urban, 2011-04-11 20:16:00
+# Version 2.12, Reini Urban, 2011-10-02 05:19:00
 
 use strict;
 use warnings;
@@ -59,12 +60,12 @@ use FileHandle;
 use Config;
 use Fcntl qw(:DEFAULT :flock);
 use File::Temp qw(tempfile);
-use File::Basename qw(basename);
+use File::Basename qw(basename dirname);
 use Cwd;
 use Pod::Usage;
 # Time::HiRes does not work with 5.6
 # use Time::HiRes qw(gettimeofday tv_interval);
-our $VERSION = 2.11;
+our $VERSION = 2.12;
 $| = 1;
 eval { require B::C::Flags; };
 
@@ -246,7 +247,7 @@ sub parse_argv {
     if( $Options->{time} ) {
       eval { require Time::HiRes; }; # 5.6 has no Time::HiRes
       if ($@) {
-        warn "-time ignored. No Time::HiRes\n";
+        warn "--time ignored. No Time::HiRes\n";
         $Options->{time} = 0;
       } else {
         Time::HiRes->import('gettimeofday','tv_interval');
@@ -366,6 +367,8 @@ sub compile_cstyle {
     }
 
     my $staticxs = opt(staticxs) ? "-staticxs," : '';
+    warn "--staticxs on darwin does not work yet\n"
+        if $staticxs and $^O eq 'darwin';
     if (opt(testsuite)) {
         my $bo = join '', @begin_output;
         $bo =~ s/\\/\\\\\\\\/gs;
@@ -608,10 +611,15 @@ sub yclept {
     $OINC{$Config{$_}}++ for (qw(privlib archlib sitelib sitearch vendorlib vendorarch));
     $OINC{'.'}++ unless ${^TAINT};
     $OINC{$_}++ for split ':', $Config{otherlibdirs};
+    if (my $incver = $Config{inc_version_list}) {
+        my $incpre = dirname($Config{sitelib});
+        $OINC{$_}++ for map { File::Spec->catdir($incpre,$_) } split(' ',$incver);
+    }
     for my $i (@INC) {
         my $inc = $i =~ m/\s/ ? qq{"$i"} : $i;
         $command .= "-I$inc " unless $OINC{$i}; # omit internal @INC dirs
     }
+    
     return $command;
 }
 
@@ -992,6 +1000,11 @@ Currently only enabled for Bytecode and CC.
 =item --testsuite
 
   perlcc -r --testsuite t/harness
+
+=item --time
+
+Benchmark the different phases B<c> I<(B::* compilation)>,
+B<cc> I<(cc compile + link)>, and B<r> (runtime).
 
 =item --no-spawn
 

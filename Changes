@@ -3,6 +3,44 @@
 	The Perl compiler was in CORE from alpha4 until Perl 5.9.4
 	and worked quite fine with Perl 5.6 and 5.8
 
+1.35	2011-10-02 rurban
+	tested from 5.6.2 until 5.15.3
+	* C: allow debugging without -MOd=C
+	improve package_pv detection for methods, two more tests.
+	detect previously missing packages within the main sourcefile
+	(50,35,72,73)
+	-O1 now includes also -fav-init2 and -fppaddr, which are all
+	stable. -O2 string handling (-fro-inc) still unstable.
+	added B::REGEXP::save for \$qr (Encode::Alias), issue 71. Still
+	  not fully fixed. Encode::Alias unusable.
+	fixed empty HV assertions since 5.15, new HV default keys = 7
+	  (3,4,36), but still unsolved 5.15 problem with endless loop in
+	  Perl_hfree_next_entry hv.c:1716 (3,4,36)
+	workaround 5.15.2 inability to walk with from %INC deleted
+	  stashes, also workaround adding already deleted DynaLoader.
+	CORE patch [perl #100138] for new 5.15.2-5.15.3 DynaLoader XS_INTERNAL
+	  problem required (16,29,44,45). Fixed with 5.15.4
+	  0001-Export-DynaLoader-symbols-from-libperl-again.patch
+	use proper PL_envgv for *main::ENV which is inited in perl_parse
+	  (fixes e.g. CGI apps using run-time values, not compile-time)
+	* CC (1.11): allow debugging without -MOd=CC
+	Try to jump from last to unknown label, put labels also onto cxstack.
+	Fixed cc_last.t test 4, jump out of anonsub, but not across C
+	  functions yet (this is disallowed in C, need to split).
+	* C.xs: added B::REGEXP::EXTFLAGS (missing from B).
+	* perlcc (2.12): omit also inc_version_list dirs from perlcc as
+	  leaving them in could lead to unexpected crashes
+	* t/cc_last.t: Fixed test 2. This works compiled and uncompiled,
+	  but the returned errcode is not compared. Skip if so.
+	* t/TESTS: add all 5 possible method/sub calls to test 35 =>01234.
+	  See http://blogs.perl.org/users/rurban/2011/06/how-perl-calls-subs-and-methods.html
+	* t/stash.t: fixed 5.8.8 stashes (overload, threads, ...)
+	* t/issue71.t: added, but not fixed yet
+	* ramblings/*.patches: CORE patches added and recommended in README.
+	* ramblings/blogs-debugging-article[1-4].pod: added to MANIFEST.
+	* perlcompile.pod, perloptree.pod: improved.
+	* ramblings/yapceu_2010.pod: added.
+
 1.34	2011-06-12 rurban
 	* Makefile.PL: fixed make install < 5.13.7
 	* issue24.t, test.pl, bytecode.t: TODO more failing tests from cpantesters

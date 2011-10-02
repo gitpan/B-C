@@ -10,11 +10,11 @@
 #  -subset  - run only random 10 of all modules. default if ! -d .svn
 #  -no-subset  - all 100 modules
 #  -t       - run also tests
-#  -log     - save log file. default on top100 and without subset
+#  -log     - save log file. default on test10 and without subset
 #
 # The list in t/mymodules comes from two bigger projects.
 # Recommended general lists are Task::Kensho and http://ali.as/top100/
-# We are using top100 from the latter.
+# We are using 10 problematic modules from the latter.
 # We are NOT running the full module testsuite yet with -t, we can do that
 # in another author test to burn CPU for a few hours resp. days.
 #
@@ -86,8 +86,8 @@ log_diag("Warning: IPC::Run is not available. Error trapping will be limited, no
 my @opts = ("");				  # only B::C
 @opts = ("", "-O", "-B") if grep /-all/, @ARGV;  # all 3 compilers
 my $perlversion = perlversion();
-$log = 1 if -d '.svn';
 $log = 0 if @ARGV;
+$log = 1 if grep /top100$/, @ARGV;
 $log = 1 if grep /-log/, @ARGV or $ENV{TEST_LOG};
 
 if ($log) {
@@ -118,7 +118,8 @@ unless (is_subset) {
   log_diag("platform = $^O $bits"."bit ".(
 	   $Config{'useithreads'} ? "threaded"
 	   : $Config{'usemultiplicity'} ? "multi"
-	     : "non-threaded"));
+	     : "non-threaded").
+	   ($Config{ccflags} =~ m/-DDEBUGGING/ ? " debug" : ""));
 }
 
 my $module_count = 0;
@@ -208,7 +209,7 @@ for my $module (@modules) {
       if ($do_test) {
         TODO: {
           local $TODO = 'all module tests';
-          `$runperl -Mblib -It -MCPAN -Mmodules -e"CPAN::Shell->testcc("$module")"`;
+          `$runperl -Mblib -It -MCPAN -Mmodules -e "CPAN::Shell->testcc("$module")"`;
         }
       }
       unlink ("mod.pl", 'a', 'a.out', 'a.exe');
@@ -232,10 +233,9 @@ sub is_todo {
   my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
   # ---------------------------------------
   # overlong linking time
-  #foreach(qw(
-  #  Moose
-  #  MooseX::Types
-  #)) { return 'always' if $_ eq $module; }
+  foreach(qw(
+   ExtUtils::CBuilder
+  )) { return 'always' if $_ eq $module; }
   if ($] < 5.007) { foreach(qw(
     ExtUtils::Install
     Module::Build
@@ -250,8 +250,6 @@ sub is_todo {
     Test::Harness
   )) { return '5.6 .al noise' if $_ eq $module; }}
   if ($] > 5.008001 and $] < 5.010) { foreach(qw(
-    Test::Tester
-    Moose
     MooseX::Types
   )) { return '5.8' if $_ eq $module; }}
   # restricted v_string hash?
@@ -260,32 +258,33 @@ sub is_todo {
    Path::Class
    DateTime::TimeZone
   )) { return '5.10.0 restricted hash/...' if $_ eq $module; }}
-  if ($] eq '5.010000') { foreach(qw(
-   Attribute::Handlers
-   Module::Pluggable
+  if ($] =~ /^5\.010/) { foreach(qw(
+   Devel::GlobalDestruction
    Moose
-   Pod::Text
-   Test::Pod
-   Test::Deep
-   Test::Exception
-   Test::Simple
-   Test::NoWarnings
-   Test::Warn
   )) { return '5.10.x crash' if $_ eq $module; }}
+  #if ($] < 5.014) { foreach(qw(
+  # ExtUtils::CBuilder
+  #)) { return '< 5.14' if $_ eq $module; }}
+  if ($] > 5.015) { foreach(qw(
+   B::Hooks::EndOfScope
+  )) { return '> 5.15' if $_ eq $module; }}
+  if ($] >= 5.015002) { foreach(qw(
+   DateTime
+   File::Temp
+   Test::Harness
+  )) { return '>= 5.15.2' if $_ eq $module; }}
 
   # ---------------------------------------
   if ($Config{useithreads}) {
     if ($] >= 5.009 and $] < 5.012) { foreach(qw(
       Carp::Clan
-      DateTime::Locale
+      DateTime
       Encode
       ExtUtils::Install
       Module::Build
-      Module::Pluggable
       MooseX::Types
+      Pod::Text
       Template::Stash
-      Test::Harness
-      Test::Tester
     )) { return '5.10 with threads' if $_ eq $module; }}
     if ($] eq 5.012000) { foreach(qw(
       DBI
@@ -299,6 +298,9 @@ sub is_todo {
       Test::Tester
     )) { return '>=5.13 with threads' if $_ eq $module; }}
   } else { #no threads --------------------------------
+    if ($] > 5.008001 and $] < 5.010) { foreach(qw(
+      Moose
+    )) { return '5.8 without threads' if $_ eq $module; }}
   }
   # ---------------------------------------
 }

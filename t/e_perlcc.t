@@ -22,7 +22,7 @@ my $e = q("print q(ok)");
 
 is(`$perlcc -S -o a -r -e $e`, "ok", "-S -o a -r -e");
 ok(-e 'a.c', "-S => a.c file");
-ok(-e $a, "keep a executable");
+ok(-e $a, "keep a executable"); #3
 cleanup;
 
 is(`$perlcc -o a -r -e $e`, "ok", "-o a r -e");
@@ -30,44 +30,47 @@ ok(! -e 'a.c', "no a.c file");
 ok(-e $a, "keep a executable"); # 6
 cleanup;
 
-is(`$perlcc -r -e $e`, "ok", "-r -e");
+is(`$perlcc -r -e $e`, "ok", "-r -e"); #7
 ok(! -e 'a.out.c', "no a.out.c file");
 ok(-e $exe, "keep default executable"); #9
 cleanup;
 
 system(qq($perlcc -o a -e $e));
 ok(-e $a, '-o => -e a');
-is($^O eq 'MSWin32' ? `a` : `./a`, "ok", "./a => ok");
+is($^O eq 'MSWin32' ? `a` : `./a`, "ok", "./a => ok"); #11
 cleanup;
 
-# Try a simple XS module which exists in 5.6.2 and blead
+# Try a simple XS module which exists in 5.6.2 and blead (test 45)
 $e = q("use Data::Dumper ();Data::Dumper::Dumpxs({});print q(ok)");
-is(`$perlcc -r -e $e`, "ok", "-r xs ".($usedl ? "dynamic" : "static"));
+is(`$perlcc -r -e $e`, "ok", "-r xs ".($usedl ? "dynamic" : "static")); #12
 cleanup;
 
-TODO: {
-  local $TODO = '--staticxs is experimental'; # fails 5.8 and darwin only
-  is(`$perlcc --staticxs -r -e $e`, "ok", "-r --staticxs xs"); #13
-  ok(-e $exe, "keep executable"); #14
+SKIP: {
+  skip "--staticxs hangs on darwin", 10 if $^O eq 'darwin';
+ TODO: {
+    local $TODO = '--staticxs is experimental' if $^O eq 'darwin' or $] < 5.010; # fails 5.8 and darwin only
+    is(`$perlcc --staticxs -r -e $e`, "ok", "-r --staticxs xs"); #13
+    ok(-e $exe, "keep executable"); #14
+  }
+  ok(! -e 'a.out.c', "delete a.out.c file without -S");
+  ok(! -e 'a.out.c.lst', "delete a.out.c.lst without -S");
+  cleanup;
+  
+ TODO: {
+    local $TODO = '--staticxs is experimental' if $^O eq 'darwin' or $] < 5.010;
+    is(`$perlcc --staticxs -S -o a -r -e $e`, "ok",
+       "-S -o -r --staticxs xs"); #17
+    ok(-e $a, "keep executable"); #18
+  }
+  ok(-e 'a.c', "keep a.c file with -S");
+  ok(-e 'a.c.lst', "keep a.c.lst with -S");
+  cleanup;
+
+  is(`$perlcc --staticxs -S -o a -r -e "print q(ok)"`, "ok",
+     "-S -o -r --staticxs without xs");
+  ok(! -e 'a.c.lst', "no a.c.lst without xs");
+  cleanup;
 }
-ok(! -e 'a.out.c', "delete a.out.c file without -S");
-ok(! -e 'a.out.c.lst', "delete a.out.c.lst without -S");
-cleanup;
-
-TODO: {
-  local $TODO = '--staticxs is experimental';
-  is(`$perlcc --staticxs -S -o a -r -e $e`, "ok",
-     "-S -o -r --staticxs xs"); #17
-  ok(-e $a, "keep executable"); #18
-}
-ok(-e 'a.c', "keep a.c file with -S");
-ok(-e 'a.c.lst', "keep a.c.lst with -S");
-cleanup;
-
-is(`$perlcc --staticxs -S -o a -r -e "print q(ok)"`, "ok",
-   "-S -o -r --staticxs without xs");
-ok(! -e 'a.c.lst', "no a.c.lst without xs");
-cleanup;
 
 my $f = "a.pl";
 open F,">",$f;
@@ -103,16 +106,19 @@ cleanup;
 
 is(`$perlcc -c -o a $f`, "", "-c -o file");
 ok(-e 'a.c', "a.c file");
-ok(! -e $a, "-c no executable, compile only");
+ok(! -e $a, "-c no executable, compile only"); #40
 cleanup;
 
+SKIP: {
 TODO: {
+  skip "--stash hangs < 5.12", 3 if $] < 5.012; #because of DB?
+  skip "--stash hangs >= 5.14", 3 if $] >= 5.014; #because of DB?
   local $TODO = "B::Stash imports too many";
-  is(`$perlcc -stash -r -o a $f`, "ok", "old-style -stash -o file");
+  is(`$perlcc -stash -r -o a $f`, "ok", "old-style -stash -o file"); #41
   is(`$perlcc --stash -r -oa $f`, "ok", "--stash -o file");
   ok(-e $a, "executable");
   cleanup;
-}
+}}
 
 is(`$perlcc -t -o a $f`, "", "-t -o file"); #44
 TODO: {
@@ -131,7 +137,7 @@ cleanup;
 isnt(`$perlcc --Wb=-fno-fold,-v -o a $f $redir`, '/Writing output/m',
      "--Wb=-fno-fold,-v -o file");
 TODO: {
-  local $TODO = "catch STDERR not STDOUT"; # fails freebsd only
+  local $TODO = "catch STDERR not STDOUT" if $^O =~ /bsd$/i; # fails freebsd only
   like(`$perlcc -B --Wb=-DG,-v -o a $f $redir`, "/-PV-/m",
        "-B -v5 --Wb=-DG -o file"); #51
 }
@@ -145,7 +151,7 @@ isnt(`$perlcc -v2 -o a $f`, "", "-v2 -o file");
 isnt(`$perlcc -v3 -o a $f`, "", "-v3 -o file");
 isnt(`$perlcc -v4 -o a $f`, "", "-v4 -o file");
 TODO: {
-  local $TODO = "catch STDERR not STDOUT"; # fails freebsd only
+  local $TODO = "catch STDERR not STDOUT" if $^O =~ /bsd$/i; # fails freebsd only
   like(`$perlcc -v5 $f $redir`, '/Writing output/m',
        "-v5 turns on -Wb=-v"); #58
   like(`$perlcc -v5 -B $f $redir`, '/-PV-/m',

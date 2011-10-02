@@ -1,0 +1,63 @@
+{
+   "abstract" : "Perl compiler",
+   "author" : [
+      "Malcolm Beattie (retired), Reini Urban <perl-compiler@googlegroups.com>"
+   ],
+   "dynamic_config" : 1,
+   "generated_by" : "ExtUtils::MakeMaker version 6.59, CPAN::Meta::Converter version 2.112150",
+   "license" : [
+      "unknown"
+   ],
+   "meta-spec" : {
+      "url" : "http://search.cpan.org/perldoc?CPAN::Meta::Spec",
+      "version" : "2"
+   },
+   "name" : "B-C",
+   "no_index" : {
+      "directory" : [
+         "t",
+         "inc"
+      ]
+   },
+   "prereqs" : {
+      "build" : {
+         "requires" : {
+            "ExtUtils::MakeMaker" : 0
+         }
+      },
+      "configure" : {
+         "requires" : {
+            "ExtUtils::MakeMaker" : 0
+         }
+      },
+      "runtime" : {
+         "recommends" : {
+            "B::Debug" : "1.16",
+            "B::Flags" : "0.04",
+            "IPC::Run" : 0,
+            "Opcodes" : "0.10"
+         },
+         "requires" : {
+            "B::Flags" : "0.04",
+            "IPC::Run" : 0,
+            "Opcodes" : 0,
+            "Time::HiRes" : 0
+         }
+      }
+   },
+   "release_status" : "stable",
+   "resources" : {
+      "bugtracker" : {
+         "web" : "http://code.google.com/p/perl-compiler/issues"
+      },
+      "homepage" : "http://www.perl-compiler.org",
+      "license" : [
+         "http://dev.perl.org/licenses/"
+      ],
+      "repository" : {
+         "url" : "http://perl-compiler.googlecode.com/"
+      },
+      "x_MailingList" : "http://groups.google.com/group/perl-compiler"
+   },
+   "version" : "1.35"
+}

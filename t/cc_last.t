@@ -14,7 +14,10 @@ my $script1 = <<'EOF';
 # last outside loop
 label: {
   print "ok\n";
-  last label;
+  my $i = 1;
+  {
+    last label if $i;
+  }
   print " not ok\n";
 }
 EOF
@@ -24,6 +27,7 @@ use B::CC;
 ctestok(1, "CC", $base, $script1,
        ($B::CC::VERSION < 1.08 or $] =~ m/5\.01[12]/ ? "last outside loop fixed with B-CC-1.08" : undef));
 
+# computed labels are invalid
 my $script2 = <<'EOF';
 # Label not found at compile-time for last
 lab1: {
@@ -33,10 +37,12 @@ lab1: {
   print " not ok\n";
 }
 EOF
-ctestok(2, "CC", $base, $script2,
-           "B::CC Label not found at compile-time for last");
+TODO: {
+  local $TODO = "Same result and errcode as uncompiled. Label not found for last";
+  ctest(2, '$ok$', "CC", $base, $script2);
+}
 
-# XXX TODO Bogus or already fixed by Heinz Knutzen for issue 36
+# Fixed by Heinz Knutzen for issue 36
 my $script3 = <<'EOF';
 # last for non-loop block
 {

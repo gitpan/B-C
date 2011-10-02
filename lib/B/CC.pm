@@ -238,7 +238,7 @@ Add Flags info to the code.
 
 package B::CC;
 
-our $VERSION = '1.10';
+our $VERSION = '1.11';
 
 use Config;
 use strict;
@@ -375,7 +375,9 @@ sub init_hash {
 %skip_lexicals   = init_hash qw(pp_enter pp_enterloop pp_leave pp_nextstate pp_dbstate);
 # which ops no not write to pad vars
 %skip_invalidate = init_hash qw(pp_enter pp_enterloop pp_leave pp_nextstate pp_dbstate
-  pp_return pp_leavesub pp_list pp_pushmark);
+  pp_return pp_leavesub pp_list pp_pushmark 
+  pp_anonlist
+  );
 
 %need_curcop     = init_hash qw(pp_rv2gv pp_bless pp_repeat pp_sort pp_caller
   pp_reset pp_rv2cv pp_entereval pp_require pp_dofile
@@ -504,7 +506,11 @@ sub output_runtime {
 		    }							\
 		 } STMT_END
 
+#if (PERL_VERSION > 15) || ((PERL_VERSION == 15) && (PERL_SUBVERSION >= 2))
+SV*
+#else
 void
+#endif
 Perl_vivify_ref(pTHX_ SV *sv, U32 to_what)
 {
     SvGETMAGIC(sv);
@@ -669,8 +675,7 @@ sub save_or_restore_lexical_state {
       if ( $changed & VALID_SV ) {
         ( $old_flags & VALID_SV ) ? $lex->write_back : $lex->invalidate;
       }
-      if ( $changed & VALID_DOUBLE )
-      {
+      if ( $changed & VALID_DOUBLE ) {
         ( $old_flags & VALID_DOUBLE ) ? $lex->load_double : $lex->invalidate_double;
       }
       if ( $changed & VALID_INT ) {
@@ -827,7 +832,10 @@ sub dopoptolabel {
   debug "dopoptolabel: returning $cxix\n" if $debug{cxstack};
   if ($cxix < 0 and $debug{cxstack}) {
     for my $cx (0 .. $#cxstack) {
-      print $cx,$cxstack[$cx],"\n";
+      debug "$cx: ",$cxstack[$cx]->{label},"\n";
+    }
+    for my $op (keys %{$labels->{label}}) {
+      debug $labels->{label}->{$op},"\n";
     }
   }
   return $cxix;
@@ -952,14 +960,14 @@ sub load_pad {
           $type  = T_DOUBLE;
           $flags = VALID_SV | VALID_DOUBLE;
         }
-        elsif ($class eq 'c_int') {  # use Ctypes;
-          $type  = T_INT;
-          $flags = VALID_SV | VALID_INT;
-        }
-        elsif ($class eq 'c_double') {
-          $type  = T_DOUBLE;
-          $flags = VALID_SV | VALID_DOUBLE;
-        }
+        #elsif ($class eq 'c_int') {  # use Ctypes;
+        #  $type  = T_INT;
+        #  $flags = VALID_SV | VALID_INT;
+        #}
+        #elsif ($class eq 'c_double') {
+        #  $type  = T_DOUBLE;
+        #  $flags = VALID_SV | VALID_DOUBLE;
+        #}
         # TODO: MooseX::Types
       }
 
@@ -1041,8 +1049,8 @@ sub label {
   my $op = shift;
   # Preserve original label name for "real" labels
   if ($op->can("label") and $op->label) {
-    # cc should error errors on duplicate named labels
-    return sprintf( "label_%s_%x", $op->label, $$op );
+    # cc should error on duplicate named labels
+    return sprintf( "label_%s_%x", $op->label, $$op);
   } else {
     return sprintf( "lab_%x", $$op );
   }
@@ -1050,9 +1058,17 @@ sub label {
 
 sub write_label {
   my $op = shift;
-  #debug sprintf("lab_%x:?\n", $$op);
+  # debug sprintf("lab_%x:?\n", $$op) if $debug{cxstack};
   unless ($labels->{label}->{$$op}) {
     my $l = label($op);
+    # named label but op not yet known?
+    if ( $op->can("label") and $op->label ) {
+      $l = "label_".$op->label;
+      # only print first such label. test 21
+      push_runtime(sprintf( "  %s:", $l))
+	unless $labels->{label}->{$l};
+      $labels->{label}->{$l} = $$op;
+    }
     if ($verbose) {
       push_runtime(sprintf( "  %s:\t/* %s */", label($op), $op->name ));
     } else {
@@ -1060,6 +1076,16 @@ sub write_label {
     }
     # avoid printing duplicate jump labels
     $labels->{label}->{$$op} = $l;
+    if ($op->can("label") and $op->label ) {
+      push(@cxstack, {
+		      type   => 0,
+		      op     => $op,
+		      nextop => ((ref($op) eq 'B::LOOP') && $op->nextop) ? $op->nextop : $op,
+		      redoop => ((ref($op) eq 'B::LOOP') && $op->redoop) ? $op->redoop : $op,
+		      lastop => ((ref($op) eq 'B::LOOP') && $op->lastop) ? $op->lastop : $op,
+		      'label' => $op->can("label") && $op->label  ? $op->label : $l
+		     });
+    }
   }
 }
 
@@ -1244,7 +1270,7 @@ sub pp_dorassign {
   write_back_stack();
   save_or_restore_lexical_state($$next);
   runtime( sprintf( "PUSHs(%s); if (%s && SvANY(%s)) goto %s;\t/* dorassign */",
-                    $sv->as_sv, $sv->as_sv, $sv->as_sv, label($next)) );
+                    $sv->as_sv, $sv->as_sv, $sv->as_sv, label($next)) ) if $sv;
   return $op->other;
 }
 
@@ -1274,8 +1300,13 @@ sub pp_padsv {
     }
     elsif ( $private & OPpDEREF ) {
       # coverage: 18
-      runtime(sprintf( "Perl_vivify_ref(aTHX_ PL_curpad[%d], %d);",
-                       $ix, $private & OPpDEREF ));
+      if ($] >= 5.015002) {
+	runtime(sprintf( "PL_curpad[%d] = Perl_vivify_ref(aTHX_ PL_curpad[%d], %d);",
+			 $ix, $ix, $private & OPpDEREF ));
+      } else {
+	runtime(sprintf( "Perl_vivify_ref(aTHX_ PL_curpad[%d], %d);",
+			 $ix, $private & OPpDEREF ));
+      }
       $vivify_ref_defined++;
       $pad[$ix]->invalidate;
     }
@@ -1315,6 +1346,7 @@ sub pp_const {
 sub pp_nextstate {
   my $op = shift;
   if ($labels->{'nextstate'}->[-1] and $labels->{'nextstate'}->[-1] == $op) {
+    debug sprintf("pop_label nextstate: cxstack label %s\n", $curcop->[0]->label) if $debug{cxstack};
     pop_label 'nextstate';
   } else {
     write_label($op);
@@ -2507,17 +2539,30 @@ sub pp_next {
     }
   }
   else {
-    $cxix = dopoptolabel( $op->pv );
-    if ( $cxix < 0 ) {
-      warn(sprintf("Warning: Label not found at compile time for \"next %s\"\n", $op->pv ));
-      return default_pp($op); # no optimization
+    my $label = $op->pv;
+    if ($label) {
+      $cxix = dopoptolabel( $label );
+      if ( $cxix < 0 ) {
+	# coverage: t/testcc 21
+	warn(sprintf("Warning: Label not found at compile time for \"next %s\"\n", $label ));
+	$labels->{nlabel}->{$label} = $$op;
+	return $op->next;
+      }
+    }
+    # Add support to leave non-loop blocks.
+    if ( CxTYPE_no_LOOP( $cxstack[$cxix] ) ) {
+      if (!$cxstack[$cxix]->{'nextop'} or !$cxstack[$cxix]->{'label'}) {
+	error("Use of \"next\" for non-loop and non-label blocks not yet implemented\n");
+      }
     }
   }
   default_pp($op);
   my $nextop = $cxstack[$cxix]->{nextop};
-  push( @bblock_todo, $nextop );
-  save_or_restore_lexical_state($$nextop);
-  runtime( sprintf( "goto %s;", label($nextop) ) );
+  if ($nextop) {
+    push( @bblock_todo, $nextop );
+    save_or_restore_lexical_state($$nextop);
+    runtime( sprintf( "goto %s;", label($nextop) ) );
+  }
   return $op->next;
 }
 
@@ -2533,17 +2578,29 @@ sub pp_redo {
     }
   }
   else {
-    $cxix = dopoptolabel( $op->pv );
-    if ( $cxix < 0 ) {
-      warn(sprintf("Warning: Label not found at compile time for \"redo %s\"\n", $op->pv ));
-      return default_pp($op); # no optimization
+    my $label = $op->pv;
+    if ($label) {
+      $cxix = dopoptolabel( $label );
+      if ( $cxix < 0 ) {
+	warn(sprintf("Warning: Label not found at compile time for \"redo %s\"\n", $label ));
+	$labels->{nlabel}->{$label} = $$op;
+	return $op->next;
+      }
+    }
+    # Add support to leave non-loop blocks.
+    if ( CxTYPE_no_LOOP( $cxstack[$cxix] ) ) {
+      if (!$cxstack[$cxix]->{'redoop'} or !$cxstack[$cxix]->{'label'}) {
+	error("Use of \"redo\" for non-loop and non-label blocks not yet implemented\n");
+      }
     }
   }
   default_pp($op);
   my $redoop = $cxstack[$cxix]->{redoop};
-  push( @bblock_todo, $redoop );
-  save_or_restore_lexical_state($$redoop);
-  runtime( sprintf( "goto %s;", label($redoop) ) );
+  if ($redoop) {
+    push( @bblock_todo, $redoop );
+    save_or_restore_lexical_state($$redoop);
+    runtime( sprintf( "goto %s;", label($redoop) ) );
+  }
   return $op->next;
 }
 
@@ -2559,21 +2616,29 @@ sub pp_last {
     }
   }
   else {
-    $cxix = dopoptolabel( $op->pv );
-    if ( $cxix < 0 ) {
-      warn( sprintf("Warning: Label not found at compile time for \"last %s\"\n", $op->pv ));
-      #return default_pp($op); # no optimization
+    my $label = $op->pv;
+    if ($label) {
+      $cxix = dopoptolabel( $label );
+      if ( $cxix < 0 ) {
+	# coverage: cc_last.t 2 (ok) 4 (ok)
+	warn( sprintf("Warning: Label not found at compile time for \"last %s\"\n", $label ));
+	# last does not jump into the future, by name without $$op
+	# instead it should jump to the block afterwards
+	$labels->{nlabel}->{$label} = $$op;
+	return $op->next;
+      }
     }
 
-    # XXX Add support for "last" to leave non-loop blocks
+    # Add support to leave non-loop blocks. label fixed with 1.11
     if ( CxTYPE_no_LOOP( $cxstack[$cxix] ) ) {
-      warn("Error: Use of \"last\" for non-loop blocks is not yet implemented\n");
-      #return default_pp($op); # no optimization
+      if (!$cxstack[$cxix]->{'lastop'} or !$cxstack[$cxix]->{'label'}) {
+	error("Use of \"last\" for non-loop and non-label blocks not yet implemented\n");
+      }
     }
   }
   default_pp($op);
-  my $lastop = $cxstack[$cxix]->{lastop}->next;
-  if ($lastop) {
+  if ($cxstack[$cxix]->{lastop} and $cxstack[$cxix]->{lastop}->next) {
+    my $lastop = $cxstack[$cxix]->{lastop}->next;
     push( @bblock_todo, $lastop );
     save_or_restore_lexical_state($$lastop);
     runtime( sprintf( "goto %s;", label($lastop) ) );
@@ -2613,7 +2678,7 @@ sub pp_substcont {
 
   #   my $pmopsym = objsym($pmop);
   my $pmopsym = $pmop->save;    # XXX can this recurse?
-  warn "pmopsym = $pmopsym\n" if $verbose;
+  # warn "pmopsym = $pmopsym\n" if $verbose;
   save_or_restore_lexical_state( ${ $pmop->pmreplstart } );
   runtime sprintf(
     "if (PL_op == ((PMOP*)(%s))%s) goto %s;",
@@ -2765,7 +2830,11 @@ sub cc_recurse {
   my $start = cc_queue(@_) if @_;
 
   while ( $ccinfo = shift @cc_todo ) {
-    if ($cc_pp_sub{$ccinfo->[0]}) { # skip duplicates
+    if ($DB::deep and $ccinfo->[0] =~ /^pp_sub_(DB|Term__ReadLine)_/) {
+      warn "cc $ccinfo->[0] skipped (debugging)\n" if $verbose;
+      debug "cc(ccinfo): @$ccinfo skipped (debugging)\n" if $debug{queue};
+    }
+    elsif ($cc_pp_sub{$ccinfo->[0]}) { # skip duplicates
       warn "cc $ccinfo->[0] already defined\n" if $verbose;
       debug "cc(ccinfo): @$ccinfo already defined\n" if $debug{queue};
     } else {
@@ -2802,14 +2871,14 @@ sub cc_main {
   my($inc_hv, $inc_av, $end_av);
   if ( !defined($module) ) {
     # forbid run-time extends of curpad syms, names and INC
-    local $B::C::pv_copy_on_grow = 1 if $B::C::ro_inc;
+    #local $B::C::pv_copy_on_grow = 1 if $B::C::ro_inc;
     warn "save context:\n" if $verbose;
     $init->add("/* save context */");
     $inc_hv          = svref_2object( \%INC )->save;
     $inc_av          = svref_2object( \@INC )->save;
   }
   {
-    # >=5.10 need to defer nullifying of all vars in END, not only new ones.
+    # >=5.10 needs to defer nullifying of all vars in END, not only new ones.
     local ($B::C::pv_copy_on_grow, $B::C::const_strings);
     $B::C::in_endav = 1;
     $end_av  = end_av->save;
@@ -2882,6 +2951,8 @@ sub compile_stats {
 # Accessible via use B::CC '-ftype-attr'; in user code, or -MB::CC=-O2 on the cmdline
 sub import {
   my @options = @_;
+  # Allow debugging in CHECK blocks without Od
+  $DB::single=1 if defined &DB::DB;
   my ( $option, $opt, $arg );
 OPTION:
   while ( $option = shift @options ) {
@@ -3003,8 +3074,8 @@ OPTION:
   }
   $strict++ if !$strict and $Config{ccflags} !~ m/-DDEBUGGING/;
 
-  # rgs didn't want opcodes to be added to Opcode. So I added it to a
-  # seperate Opcodes.
+  # rgs didn't want opcodes to be added to Opcode. So I had to add it to a
+  # seperate Opcodes package.
   eval { require Opcodes; };
   if (!$@ and $Opcodes::VERSION) {
     my $MAXO = Opcodes::opcodes();
@@ -3099,16 +3170,18 @@ help make use of this compiler.
 
 =head1 TYPES
 
-Implemented type classes are B<int> and B<double>. Planned is B<string> also.
-Implemented are only SCALAR types yet.
+Implemented type classes are B<int> and B<double>.
+Planned is B<string> also.
+Implemented are only SCALAR types yet. 
+Typed arrays and hashes and perfect hashes need CORE and L<types> support first.
 
-Implemented are infered types via the names of locals, with '_i', '_d' suffix
+Deprecated are inferred types via the names of locals, with '_i', '_d' suffix
 and an optional 'r' suffix for register allocation.
 
   C<my ($i_i, $j_ir, $num_d);>
 
 Planned type attributes are B<int>, B<double>, B<string>,
-B<unsigned>, B<register>, B<temporary>, B<ro> and B<readonly>.
+B<unsigned>, B<ro> / B<const>.
 
 The attributes are perl attributes, and int|double|string are either
 compiler classes or hints for more allowed types.
@@ -3118,18 +3191,19 @@ compiler classes or hints for more allowed types.
   C<my int $i :string;>  declares a PVIV. Same as C<my $i:int:string;>
 
   C<my int @array :unsigned = (0..4);> will be used as c var in faster arithmetic and cmp.
-                                        With :readonly or :ro even more.
-  C<my string %hash : readonly = (foo => any, bar => any);> declare string keys only
-                  and may be generated as read-only perfect hash.
+                                       With :const or :ro even more.
+  C<my string %hash :const
+    = (foo => 'foo', bar => 'bar');> declare string values,
+                                     generate as read-only perfect hash.
 
-B<unsigned> is valid for int only and declares an UV.
+B<:unsigned> is valid for int only and declares an UV.
 
-B<register> denotes optionally a short and hot life-time.
+B<:register> denotes optionally a short and hot life-time.
 
-B<temporary> are usually generated internally, nameless lexicals.
+B<:temporary> are usually generated internally, nameless lexicals.
 They are more aggressivly destroyed and ignored.
 
-B<ro> and B<readonly> throw a compile-time error on write access and may optimize
+B<:ro> or B<:const> throw a compile-time error on write access and may optimize
 the internal structure of the variable. We don't need to write back the variable
 to perl (lexical write_back).
 
@@ -3144,25 +3218,26 @@ NOT YET OK (attributes):
 
   my int $i :register;
   my $i :int;
-  my $const :int:ro;
+  my $const :int:const;
   my $uv :int:unsigned;
 
 ISSUES
 
-This does not work with pure perl, unless you C<use B::CC> or implement the classes and
-attribute type stubs in your code, C<sub Mypkg::MODIFY_SCALAR_ATTRIBUTES {}> and
-C<sub Mypkg::FETCH_SCALAR_ATTRIBUTES {}>. (TODO: empty should be enough to be detected
-by the compiler.)
+This does not work with pure perl, unless you C<use B::CC> or C<use types> or
+implement the classes and attribute type stubs in your code,
+C<sub Mypkg::MODIFY_SCALAR_ATTRIBUTES {}> and C<sub Mypkg::FETCH_SCALAR_ATTRIBUTES {}>.
+(TODO: empty should be enough to be detected by the compiler.)
 
 Compiled code pulls in the magic MODIFY_SCALAR_ATTRIBUTES and FETCH_SCALAR_ATTRIBUTES
 functions, even if they are used at compile time only.
 
 Using attributes adds an import block to your code.
 
-Only B<our> variable attributes are checked at compile-time, B<my> variables attributes at
-run-time only, which is too late for the compiler.
-
-Perl attributes suck. Nobody thought of the compiler then.
+Only B<our> variable attributes are checked at compile-time,
+B<my> variables attributes at run-time only, which is too late for the compiler.
+But only my variables can be typed, our not as they are typed automatically with
+the defined package.
+Perl attributes need to be fixed for types hints.
 
 FUTURE
 
@@ -3171,13 +3246,15 @@ We should be able to support types on ARRAY and HASH.
   my int @array; # array of ints, faster magic-less access esp. in inlined arithmetic and cmp.
   my string @array : readonly = qw(foo bar); # compile-time error on write. no lexical write_back
 
-  my int $hash = {1 => any, 2 => bla};	    # int keys (also on hashrefs), typechecked on write
-  my string %hash1 : readonly = (foo => any); # string keys only => gperf, compile-time error on write
+  my int $hash = {"1" => 1, "2" => 2}; # int values, type-checked on write my
+  string %hash1 : readonly = (foo => 'bar');# string keys only => maybe gperf
+                                            # compile-time error on write
 
-Hash value types defaults to full SVs as values, only the keys are typed.
+Typed hash keys are always strings, values are typed.
 
 We should be also able to add type attributes for functions and methods,
-i.e. for argument and return types. No idea for specs yet.
+i.e. for argument and return types. See L<types> and 
+L<http://blogs.perl.org/users/rurban/2011/02/use-types.html>
 
 =head1 BUGS
 
@@ -3205,7 +3282,8 @@ produces the output
 
     024
 
-with standard perl but gives a compile-time error with the compiler.
+with standard perl but calculates with the compiler the
+goto label_NUMBER wrong, producing 01234.
 
 =head2 Context of ".."
 
@@ -3232,6 +3310,7 @@ If the option B<-strict> is used it gives a compile-time error.
 Compiled Perl programs use native C arithmetic much more frequently
 than standard perl. Operations on large numbers or on boundary
 cases may produce different behaviour.
+In doubt B::CC code behaves more like with C<use integer>.
 
 =head2 Deprecated features
 

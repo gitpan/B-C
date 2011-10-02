@@ -248,9 +248,9 @@ result[33]='ok'
 # (Steven Schubiger      2006-02-03 17:24:49 +0100 3967) i.e. 5.8.9 but not 5.8.8
 tests[34]='my $x=$ENV{TMPDIR};print "ok"'
 result[34]='ok'
-# method_named. fixed with 1.16
-tests[35]='package dummy;sub meth{print "ok"};package main;dummy->meth(1)'
-result[35]='ok'
+# static method_named. fixed with 1.16
+tests[35]='package dummy;my $i=0;sub meth{print $i++};package main;dummy->meth(1);my dummy $o = bless {},"dummy";$o->meth("const");my $meth="meth";$o->$meth("const");dummy->$meth("const");dummy::meth("dummy","const")'
+result[35]='01234'
 # HV self-ref
 tests[36]='my ($rv, %hv); %hv = ( key => \$rv ); $rv = \%hv; print "ok";'
 result[36]='ok'
@@ -311,6 +311,12 @@ result[70]='ok'
 # issue24
 tests[71]='dbmopen(%H,q(f),0644);print q(ok);'
 result[71]='ok'
+# object call: method_named with args.
+tests[72]='package dummy;sub meth{print "ok"};package main;my dummy $o = bless {},"dummy"; $o->meth("const")'
+result[72]='ok'
+# object call: dynamic method_named with args.
+tests[73]='package dummy;sub meth{print "ok"};package main;my $meth="meth";my $o = bless {},"dummy"; $o->$meth("const")'
+result[73]='ok'
 
 # from here on we test CC specifics only
 
@@ -411,7 +417,7 @@ do
   fi
 done
 
-test "$(perl -V:gccversion)" = "gccversion='';" || CCMD="$CCMD -g3"
+test "$(perl -V:gccversion)" = "gccversion='';" || CCMD="$CCMD -g" #-g3
 if [ -z $OPTIM ]; then OPTIM=-1; fi # all
 
 if [ -z "$QUIET" ]; then

@@ -16,6 +16,8 @@ my $ITHREADS  = ($Config{useithreads});
 prepare_c_tests();
 
 my @todo  = todo_tests_default("c_o1");
-my @skip = (15) if $] == 5.010000 and $ITHREADS and !$DEBUGGING; # hanging
+my @skip = ();
+push @skip, 15 if $] == 5.010000 and $ITHREADS and !$DEBUGGING; # hanging;
+push @skip, 29 if $] > 5.015; #hangs
 
 run_c_tests("C,-O1", \@todo, \@skip);
