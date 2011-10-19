@@ -3,14 +3,39 @@
 	The Perl compiler was in CORE from alpha4 until Perl 5.9.4
 	and worked quite fine with Perl 5.6 and 5.8
 
+1.36	2011-10-19 rurban
+	lexical warnings and more 5.15 fixes
+	* C: new B::LEXWARN, fixed representation of lexical warnings which was broken
+	  since 8e01d9a6  5.8.9/5.9.4 (issue 76)
+	added section free, use it for lexical cop_warnings (const STRLEN*)
+	  (TODO: static PV, HEK + COPs)
+	workaround for utf8::SWASHNEW adjusted to 5.15
+	PAD* sv flags changed in 5.15.3
+	XSLoader API changed (HEK in caller i.e.): had to add a
+	  XSLoader::load_file for [perl #101336] >= 5.15.3,
+	  also use mXPUSH for sp instead of 1-arg targ
+	Set SvLEN=0 for static PVs to skip sv_clear (problem with 13)
+	Handle overlarge negative 64bit ints, double not yet.
+	Move -fwarn-sv from -O2 to -O1
+	Move -fsave-data from -O3 to -O2
+	Compile *main::DATA IO handle automatically (__DATA__), just package __DATA__
+	  handles need -fsave-data (15)
+	Die with 5.8.4/5.8.5 threaded with split->pushre on invalid
+	  pmreplroot. This is a core B::walkoptree bug and can not be
+	  easily fixed.
+	Tests 15 and 103 do not hang anymore, 15 and 29 pass mostly
+	* C.xs: added -Dts support to runloop to check internal compiler
+	  problems
+	* t/issue76.t: added
+
 1.35	2011-10-02 rurban
 	tested from 5.6.2 until 5.15.3
 	* C: allow debugging without -MOd=C
 	improve package_pv detection for methods, two more tests.
 	detect previously missing packages within the main sourcefile
-	(50,35,72,73)
+	  (50,35,72,73)
 	-O1 now includes also -fav-init2 and -fppaddr, which are all
-	stable. -O2 string handling (-fro-inc) still unstable.
+	  stable. -O2 string handling (-fro-inc) still unstable.
 	added B::REGEXP::save for \$qr (Encode::Alias), issue 71. Still
 	  not fully fixed. Encode::Alias unusable.
 	fixed empty HV assertions since 5.15, new HV default keys = 7

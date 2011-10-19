@@ -308,15 +308,45 @@ result[50]='ok'
 # issue27
 tests[70]='require LWP::UserAgent;print q(ok);'
 result[70]='ok'
-# issue24
-tests[71]='dbmopen(%H,q(f),0644);print q(ok);'
-result[71]='ok'
+#issue 24
+tests[74]='dbmopen(%H,q(f),0644);print q(ok);'
+result[74]='ok'
 # object call: method_named with args.
 tests[72]='package dummy;sub meth{print "ok"};package main;my dummy $o = bless {},"dummy"; $o->meth("const")'
 result[72]='ok'
 # object call: dynamic method_named with args.
 tests[73]='package dummy;sub meth{print "ok"};package main;my $meth="meth";my $o = bless {},"dummy"; $o->$meth("const")'
 result[73]='ok'
+# issue71
+tests[71]='
+package my;
+our @a;
+sub f { 
+  my($alias,$name)=@_;
+  unshift(@a, $alias => $name);
+  my $find = "ok"; 
+  my $val = $a[1];
+  if ( ref($alias) eq "Regexp" && $find =~ $alias ) {
+    eval $val;
+  }
+  $find
+}
+package main;
+*f=*my::f;
+print "ok" if f(qr/^(.*)$/ => q("\L$1"));'
+result[71]="ok"
+# issue 71_2+3: cop_warnings issue76 and const destruction issue71
+tests[75]='
+use Encode;
+my $x = "abc";
+print "ok" if "abc" eq Encode::decode("UTF-8", $x);'
+result[75]='ok'
+tests[76]='use warnings;
+{ no warnings q(void); # issue76 lexwarn
+  length "ok";
+  print "ok"
+};'
+result[76]='ok'
 
 # from here on we test CC specifics only
 
@@ -417,7 +447,7 @@ do
   fi
 done
 
-test "$(perl -V:gccversion)" = "gccversion='';" || CCMD="$CCMD -g" #-g3
+test "$(perl -V:gccversion)" = "gccversion='';" || CCMD="$CCMD -g3"
 if [ -z $OPTIM ]; then OPTIM=-1; fi # all
 
 if [ -z "$QUIET" ]; then

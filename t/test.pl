@@ -409,10 +409,10 @@ sub run_cc_test {
 #	print "ok $cnt # skip $backend SIGSEGV or hangs\n";
 #	return 0;
 #    }
-    if ($todo and $cnt =~ /^(15|103)$/ and $] eq '5.010001') {
-	print "ok $cnt # skip $backend hangs\n";
-	return 0;
-    }
+#    if ($todo and $cnt =~ /^(103)$/ and $] eq '5.010001') {
+#	print "ok $cnt # skip $backend hangs\n";
+#	return 0;
+#    }
     $opt =~ s/,-/_/ if $opt;
     $opt = '' unless $opt;
     use Config;
@@ -744,14 +744,14 @@ sub todo_tests_default {
     #push @todo, (29)   if $] >= 5.010 and !$DEBUGGING;
     #push @todo, (29)   if $] >= 5.013006;
     #push @todo, (15);
-    push @todo, (7)   if $] eq '5.008005';
+    # split->pushre->pmreplroot as int. bug in B walker
+    push @todo, (7)   if $] > 5.008 and $] < 5.008008 and $ITHREADS;
     # 5.15 empty HV fixed with r1124
     #push @todo, (3,4,36) if $] >= 5.015; # Assert array: Perl_hfree_next_entry hv.c:1716
-    push @todo, (16,39,44,45) if $] >= 5.015002 and !$ENV{DL_NOWARN};  # DynaLoader 5.15.2 issue
-    push @todo, (29)    if $] >= 5.015002; # B::C crash
+    #push @todo, (16,39,44,45) if $] >= 5.015002 and !$ENV{DL_NOWARN};  # DynaLoader 5.15.2 issue
     # 15 passes on cygwin XP, but fails on cygwin Win7
+    push @todo, (15) if $] > 5.013 or $] < 5.007;
     if ($what =~ /^c(|_o[1-4])$/) {
-	push @todo, (15);
         # 14+23 fixed with 1.04_29, for 5.10 with 1.04_31
         # 15+28 fixed with 1.04_34
         # 5.6.2 CORE: 8,15,16,22. 16 fixed with 1.04_24, 8 with 1.04_25
@@ -763,7 +763,8 @@ sub todo_tests_default {
         # push @todo, (39)   if $] > 5.007 and $] < 5.009;
         # fixed with 1.30
         # push @todo, (21)   if $] > 5.011 and $] < 5.013;
-        push @todo, (29)    if $] > 5.009 and $] < 5.012;
+	push @todo, (13)     if $] > 5.009 and $what =~ /c_o[34]/;
+        #push @todo, (29)    if $] > 5.009 and $] < 5.012;
         push @todo, (48)    if $what eq 'c_o4' and $] < 5.010;
         # push @todo, (28,48) if $what =~ /c_o[34]/  and $] < 5.014;
         push @todo, (21)    if $] > 5.011 and $] <= 5.013006;
@@ -774,28 +775,35 @@ sub todo_tests_default {
 	# fixed with 1.35
         # push @todo, (11)    if $what =~ /c_o[1234]/ and $] < 5.010;
         push @todo, (44,45) if $] < 5.009;
-        push @todo, (29,44,45) if $what =~ /c_o[234]/;
+        #push @todo, (29,44,45) if $what =~ /c_o[234]/;
 	# @ISA issue 64
-        push @todo, (50)    if $what eq 'c_o4'; 
-        push @todo, (10)    if $what =~ /c_o[234]/ and $] >= 5.010;
-        push @todo, (34)    if $what =~ /c_o[34]/  and $] > 5.011 and $] <= 5.013;
-        push @todo, (19)    if $what eq 'c_o2' and $ITHREADS;
-        push @todo, (11)    if $what =~ /c_o[1234]/ and $] < 5.009 and !$ITHREADS;
+        push @todo, (15,50)  if $what eq 'c_o4'; 
+        #push @todo, (10)    if $what =~ /c_o[234]/ and $] >= 5.010;
+        #push @todo, (34)    if $what =~ /c_o[34]/  and $] > 5.011 and $] <= 5.013;
+        #push @todo, (19)    if $what eq 'c_o2' and $ITHREADS;
+        push @todo, (11)    if $what =~ /c_o[1234]/
+	  and $] > 5.007 and $] < 5.009 and !$ITHREADS;
 	push @todo, (10,12,19,25) if $what eq 'c_o4';
+	# issue 78 error at DynaLoader (require Carp + invalid version)
+        push @todo, (29,44,45) if $] > 5.015 and $what =~ /c_o[34]/;
     } elsif ($what =~ /^cc/) {
         # 8,11,14..16,18..19 fail on 5.00505 + 5.6, old core failures (max 20)
         # on cygwin 29 passes
-        push @todo, (15,21,30,50); # fixed 44 -nt
-	push @todo, (3,16)  if $] eq '5.008005';
+        push @todo, (21,30,50); # fixed 44 -nt
+	push @todo, (3)     if $] > 5.008 and $] <= 5.008005;
+	push @todo, (16)    if $] <= 5.008005;
         push @todo, (44)    if $ITHREADS or $] < 5.012;
         #push @todo, (44)   if !$ITHREADS and $] >= 5.012;
+	push @todo, (7)     if $] > 5.008 and $] < 5.008008; # only know 5.8.4 and 5.8.5
         push @todo, (105)   if $] > 5.008005 and $] < 5.010;
         push @todo, (10,16) if $what eq 'cc_o2';
         push @todo, (27)    if $] < 5.007 and $what eq 'cc_o2';
         push @todo, (45)    if $] < 5.007;
-        push @todo, (104)   if $] < 5.007; # leaveloop, no cxstack
+        push @todo, (104,105) if $] < 5.007; # leaveloop, no cxstack
         push @todo, (11,45,103,105) if $] > 5.007 and $] < 5.009;
-        push @todo, (29)    if $] < 5.008006 or $] > 5.013;
+	# only tested 5.8.4 and .5
+	push @todo, (3)     if $] > 5.008 and $] < 5.008005 and $what =~ /^cc_o[12]/;
+        push @todo, (29)    if $] < 5.008006 or ($] > 5.013 and $] < 5.015);
         #push @todo, (11,27) if $] < 5.009;
         push @todo, (14)    if $] >= 5.010 and $^O !~ /MSWin32|cygwin/i;
         # solaris also. I suspected nvx<=>cop_seq_*
@@ -811,7 +819,7 @@ sub todo_tests_default {
     }
     push @todo, (48)   if $] > 5.007 and $] < 5.009 and $^O =~ /MSWin32|cygwin/i;
     push @todo, (25)   if $] eq "5.010001" and !$DEBUGGING and $ITHREADS;
-    push @todo, (25)   if $] >= 5.010 and $] < 5.012 and !$ITHREADS;
+    #push @todo, (25)   if $] >= 5.010 and $] < 5.012 and !$ITHREADS;
     #push @todo, (32)  if $] >= 5.011003;
     return @todo;
 }
