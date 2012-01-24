@@ -28,20 +28,20 @@ BASE=`basename $0`
 # if $] < 5.9 you may want to remove -Mblib for testing the core lib. -o
 #Mblib="`$PERL -e'print (($] < 5.009005) ? q() : q(-Mblib))'`"
 Mblib=${Mblib:--Mblib} # B::C is now fully 5.6+5.8 backwards compatible
+v513="`$PERL -e'print (($] < 5.013005) ? q() : q(-fno-fold,-fno-warnings,))'`"
+# OCMD=${OCMD}${v513}
 if [ -z $Mblib ]; then 
     VERS="${VERS}_global"; 
-    OCMD="$PERL $Mblib -MO=C,-DcAC,"
+    OCMD="$PERL $Mblib -MO=C,${v513}-DcAC,"
     if [ $BASE = "testcc.sh" ]; then # DrOsplt 
-        OCMD="$PERL $Mblib -MO=CC,-DOsplt,"
+        OCMD="$PERL $Mblib -MO=CC,${v513}-DOsplt,"
     fi
 else
-    OCMD="$PERL $Mblib -MO=C,-DsGCp,-v,"
+    OCMD="$PERL $Mblib -MO=C,${v513}-DsCp,-v,"
     if [ $BASE = "testcc.sh" ]; then # DoOscprSql
-        OCMD="$PERL $Mblib -MO=CC,-DOscpSql,-v,"
+        OCMD="$PERL $Mblib -MO=CC,${v513}-DOscpSql,-v,"
     fi
 fi
-v513="`$PERL -e'print (($] < 5.013005) ? q() : q(-fno-fold,-fno-warnings,))'`"
-OCMD=${OCMD}${v513}
 CONT=
 # 5.6: rather use -B static
 #CCMD="$PERL script/cc_harness -g3"
@@ -76,6 +76,9 @@ function runopt {
     if [ $optim -lt 5 ]; then CMD=$OCMDO1
     else CMD=$OCMD
     fi
+    if [ "$o" = "ccode46" -o "$o" = "cccode46" ]; then
+	CMD="$CMD-fstash,"
+    fi
     vcmd ${CMD}-o${o}${suff}.c $o.pl
     test -z $CPP || vcmd $CCMD ${o}${suff}.c -c -E -o ${o}${suff}_E.c
     vcmd $CCMD ${o}${suff}.c $LCMD -o ${o}${suff}
@@ -83,7 +86,10 @@ function runopt {
     if [ -z "$QUIET" ]; then echo "./${o}${suff}"
     else echo -n "./${o}${suff} "
     fi
+    mem=$(ulimit -m)
+    ulimit -S -m 50000
     res=$(./${o}${suff}) || fail "./${o}${suff}" "errcode $?"
+    ulimit -S -m $mem
     if [ "X$res" = "X${result[$n]}" ]; then
 	test "X$res" = "X${result[$n]}" && pass "./${o}${suff}" "=> '$res'"
         if [ -z $KEEP ]; then rm ${o}${suff}_E.c ${o}${suff}.c ${o}${suff} 2>/dev/null; fi
@@ -118,25 +124,30 @@ function ctest {
       else # -1
 	rm $o.c $o ${o}_o.c ${o}_o 2> /dev/null
 	vcmd ${OCMD}-o$o.c $o.pl
-        test -s $o.c || (echo "empty $o.c"; test -z $CONT && exit)
+        test -s $o.c || (echo "empty $o.c"; test -z $CONT && exit 2)
 	test -z $CPP || vcmd $CCMD $o.c -c -E -o ${o}_E.c
 	vcmd $CCMD $o.c $LCMD -o $o
 	test -x $o || (test -z $CONT && exit)
 	if [ -z "$QUIET" ]; then echo "./$o"
 	else echo -n "./$o "
         fi
-	res=$(./$o) || (fail "./${o}${suff}" "'$?' = $?"; test -z $CONT && exit)
+	res=$(./$o) || (fail "./${o}${suff}" "'$?' = $?"; test -z $CONT && exit 1)
 	if [ "X$res" = "X${result[$n]}" ]; then
 	    pass "./$o" "'$str' => '$res'"
             if [ -z $KEEP ]; then rm ${o}_E.c ${o}.c ${o} 2>/dev/null; fi
-	    runopt $o 1 && \
-	    runopt $o 2  && \
-	    runopt $o 3
-	    #runopt $o 4 && \
+	    if [ $BASE = "testcc.sh" ]; then
+	      runopt $o 1 && \
+	        runopt $o 2
+            else
+	      runopt $o 1 && \
+	        runopt $o 2 && \
+	        runopt $o 3 && \
+	        runopt $o 4
+            fi
 	    true
 	else
 	    fail "./$o" "'$str' => '$res' Expected: '${result[$n]}'"
-	    test -z $CONT && exit
+	    test -z $CONT && exit 3
 	fi
       fi
     fi
@@ -175,7 +186,7 @@ result[10]='133';
 # index: do fbm_compile or not
 tests[11]='$x="Cannot use"; print index $x, "Can"'
 result[11]='0';
-tests[12]='my $i_i=6; eval "print \$i_i\n"'
+tests[12]='my $i_i=6; eval "print \$i_i\n"; print ""'
 result[12]='6';
 tests[13]='BEGIN { %h=(1=>2,3=>4) } print $h{3}'
 result[13]='4';
@@ -199,6 +210,7 @@ result[18]='ba';
 tests[19]='print sort { my $p; $b <=> $a } 1,4,3'
 result[19]='431';
 # not repro: something like this is broken in original 5.6 (Net::DNS::ZoneFile::Fast)
+# see new test 33
 tests[20]='$a="abcd123";my $r=qr/\d/;print $a =~ $r;'
 result[20]='1';
 # broken on early alpha and 5.10: run-time labels.
@@ -242,7 +254,7 @@ result[32]='12'
 # C qr test was broken in 5.6 -- needs to load an actual file to test. See test 20.
 # used to error with Can't locate object method "save" via package "U??WVS?-" (perhaps you forgot to load "U??WVS?-"?) at /usr/lib/perl5/5.6.2/i686-linux/B/C.pm line 676.
 # fails with new constant only. still not repro (r-magic probably)
-tests[33]='BEGIN{unshift @INC,("t");} use qr_loaded_module; print "ok"'
+tests[33]='BEGIN{unshift @INC,("t");} use qr_loaded_module; print "ok" if qr_loaded_module::qr_called_in_sub("name1")'
 result[33]='ok'
 # init of magic hashes. %ENV has e magic since a0714e2c perl.c
 # (Steven Schubiger      2006-02-03 17:24:49 +0100 3967) i.e. 5.8.9 but not 5.8.8
@@ -268,7 +280,8 @@ result[39]='1'
 tests[40]='my $var="this string has a null \\000 byte in it";print "ok";'
 result[40]='ok'
 # Shared scalar, n magic. => Don't know how to handle magic of type \156.
-usethreads="`$PERL -MConfig -e'print ($Config{useithreads} ? q(use threads;) : q())'`"
+usethreads=""
+#usethreads="`$PERL -MConfig -e'print ($Config{useithreads} ? q(use threads;) : q())'`"
 #usethreads='BEGIN{use Config; unless ($Config{useithreads}) {print "ok"; exit}} '
 #;threads->create(sub{$s="ok"})->join;
 # not yet testing n, only P
@@ -286,8 +299,10 @@ result[44]='ok'
 # test dynamic loading
 tests[45]='use Data::Dumper ();Data::Dumper::Dumpxs({});print "ok";'
 result[45]='ok'
-# Exporter should end up in main:: stash when used in
-tests[46]='use Exporter; if (exists $main::{"Exporter::"}) { print "ok"; }'
+# issue 79: Exporter:: stash missing in main::
+#tests[46]='use Exporter; if (exists $main::{"Exporter::"}) { print "ok"; }'
+tests[46]='use Exporter; print "ok" if %main::Exporter::'
+#tests[46]='use Exporter; print "ok" if scalar(keys(%main::Exporter::)) > 2'
 result[46]='ok'
 # non-tied av->MAGICAL
 tests[47]='@ISA=(q(ok));print $ISA[0];'
@@ -304,6 +319,9 @@ result[49]='ok'
 # @ISA issue 64
 tests[50]='package Top;sub top{q(ok)};package Next;our @ISA=qw(Top);package main;print Next->top();'
 result[50]='ok'
+# XXX TODO check if signals work, sigwarn and SIG{INT}
+tests[51]='BEGIN{$SIG{__WARN__}=sub{$w++;};}$a="abcdefxyz";eval{substr($a,999,999)="";};print q(ok) if $w'
+result[51]='ok'
 #-------------
 # issue27
 tests[70]='require LWP::UserAgent;print q(ok);'
@@ -335,7 +353,8 @@ package main;
 *f=*my::f;
 print "ok" if f(qr/^(.*)$/ => q("\L$1"));'
 result[71]="ok"
-# issue 71_2+3: cop_warnings issue76 and const destruction issue71
+# issue 71_2+3: cop_warnings issue76 and const destruction issue71 fixed
+# ok with "utf-8-strict"
 tests[75]='
 use Encode;
 my $x = "abc";
@@ -347,6 +366,63 @@ tests[76]='use warnings;
   print "ok"
 };'
 result[76]='ok'
+tests[81]='sub int::check {1}  #create int package for types
+sub x(int,int) { @_ } #cvproto
+my $o = prototype \&x;
+if ($o eq "int,int") {print "o"}else{print $o};
+sub y($) { @_ } #cvproto
+my $p = prototype \&y;
+if ($p eq q($)) {print "k"}else{print $p};
+require bytes;
+sub my::length ($) { # possible prototype mismatch vs _
+  if ( bytes->can(q(length)) ) {
+     *length = *bytes::length;
+     goto &bytes::length;
+  }
+  return CORE::length( $_[0] );
+}
+print my::length($p);'
+result[81]='ok1'
+tests[90]='my $s = q(test string);
+$s =~ s/(?<first>test) (?<second>string)/\2 \1/g;
+print q(o) if $s eq q(string test);
+q(test string) =~ /(?<first>\w+) (?<second>\w+)/;
+print q(k) if $+{first} eq q(test);'
+result[90]='ok'
+# IO handles
+tests[91]='# issue59
+use strict;
+use warnings;
+use IO::Socket;
+my $remote = IO::Socket::INET->new( Proto => "tcp", PeerAddr => "perl.org", PeerPort => "80" );
+print $remote "GET / HTTP/1.0" . "\r\n\r\n";
+my $result = <$remote>;
+$result =~ m|HTTP/1.1 200 OK| ? print "ok" : print $result;
+close $remote;
+'
+result[91]='ok'
+tests[93]='
+my ($pid, $out, $in);
+BEGIN {
+  local(*FPID);
+  $pid = open(FPID, "echo <<EOF |");    # DIE
+  open($out, ">&STDOUT");		# EASY
+  open(my $tmp, ">", "pcc.tmp");	# HARD to get filename, WARN
+  print $tmp "test\n";
+  close $tmp;				# OK closed
+  open($in, "<", "pcc.tmp");		# HARD to get filename, WARN
+}
+# === run-time ===
+print $out "o";
+kill 0, $pid; 			     # BAD! warn? die?
+print "k" if "test" eq read $in, my $x, 4;
+unlink "pcc.tmp";
+'
+result[93]='ok'
+tests[931]='my $f;BEGIN{open($f,"<README");}read $f,my $in, 2; print "ok"'
+result[931]='ok'
+tests[932]='my $f;BEGIN{open($f,">&STDOUT");}print $f "ok"'
+result[932]='ok'
 
 # from here on we test CC specifics only
 
@@ -362,8 +438,9 @@ result[103]='B::PV'
 # CC reset
 tests[104]='@a=(1..4);while($a=shift@a){print $a;}continue{$a=~/2/ and reset q(a);}'
 result[104]='12'
-# CC attrs. requires -MB::CC with pure perl
-tests[105]='use blib;use B::CC;my int $r;my $i:int=2;our double $d=3.0; $r=$i*$i; $r*=$d; print $r;'
+# CC -ftype-attr
+#tests[105]='$int::dummy=0;$double::dummy=0;my int $r;my $i:int=2;our double $d=3.0; $r=$i*$i; $r*=$d; print $r;'
+tests[105]='$int::dummy=0;$double::dummy=0;my int $r;my $i_i=2;our double $d=3.0; $r=$i*$i; $r*=$d; print $r;'
 result[105]='12'
 
 # issue35
@@ -447,7 +524,13 @@ do
   fi
 done
 
-test "$(perl -V:gccversion)" = "gccversion='';" || CCMD="$CCMD -g3"
+if [ "$(perl -V:gccversion)" != "gccversion='';" ]; then
+    if [ "$(uname)" = "Darwin" ]; then
+	CCMD="$CCMD -g"
+    else
+	CCMD="$CCMD -g3"
+    fi
+fi
 if [ -z $OPTIM ]; then OPTIM=-1; fi # all
 
 if [ -z "$QUIET" ]; then
@@ -462,7 +545,7 @@ else
     OCMDO3="$(echo $OCMDO3|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
     OCMDO4="$(echo $OCMDO4|sed -e 's/-D.*,//' -e 's/,-v,/,/' -e s/-MO=/-MO=$qq/)"
     # gnu make?
-    make --silent >/dev/null || make 2&>1 >/dev/null
+    make -s >/dev/null || make 2&>1 >/dev/null
 fi
 
 # need to shift the options

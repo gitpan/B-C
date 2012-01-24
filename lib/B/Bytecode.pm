@@ -3,6 +3,7 @@
 # Copyright (c) 1994-1999 Malcolm Beattie. All rights reserved.
 # Copyright (c) 2003 Enache Adrian. All rights reserved.
 # Copyright (c) 2008-2011 Reini Urban <rurban@cpan.org>. All rights reserved.
+# Copyright (c) 2011-2012 cPanel Inc. All rights reserved.
 # This module is free software; you can redistribute and/or modify
 # it under the same terms as Perl itself.
 
@@ -12,13 +13,13 @@
 
 package B::Bytecode;
 
-our $VERSION = '1.11';
+our $VERSION = '1.12';
 
 #use 5.008;
-use B qw(class main_cv main_root main_start
-	 begin_av init_av end_av cstring comppadlist
-	 OPf_SPECIAL OPf_STACKED OPf_MOD
-	 OPpLVAL_INTRO SVf_READONLY SVf_ROK);
+use B qw( class main_cv main_root main_start
+	  begin_av init_av end_av cstring comppadlist
+	  OPf_SPECIAL OPf_STACKED OPf_MOD
+	  OPpLVAL_INTRO SVf_READONLY SVf_ROK );
 use B::Assembler qw(asm newasm endasm);
 
 BEGIN {
@@ -497,8 +498,9 @@ sub B::PVMG::domagic {
 
   nice1 '-' . class($sv) . '-', asm "ldsv", $varix = $ix unless $ix == $varix;
   for (@mglist) {
+    next unless ord($_->TYPE);
     asm "sv_magic", ord($_->TYPE), cstring $_->TYPE;
-    asm "mg_obj",   shift @mgix;
+    asm "mg_obj",   shift @mgix; # D sets itself, see mg.c:mg_copy
     my $length = $_->LENGTH;
     if ( $length == B::HEf_SVKEY and !$PERL56) {
       asm "mg_namex", shift @namix;
@@ -558,11 +560,28 @@ sub B::IO::bsave {
   asm "xio_bottom_gv",   $bottomix;
   asm "xio_subprocess",  $io->SUBPROCESS unless $PERL510;
   asm "xio_type",        ord $io->IoTYPE;
-  if ($PERL56) {
-    asm "xio_flags",     $io->IoFLAGS;
+  if ($PERL56) { # do not mess with PerlIO
+    asm "xio_flags",       $io->IoFLAGS;
+  } else {
+    # XXX IOf_NOLINE off was added with 5.8, but not used (?)
+    asm "xio_flags", ord($io->IoFLAGS) & ~32;		# XXX IOf_NOLINE 32
   }
-  # XXX IOf_NOLINE off was added with 5.8, but not used (?)
-  # asm "xio_flags", ord($io->IoFLAGS) & ~32;		# XXX IOf_NOLINE 32
+  # issue93: restore std handles
+  if (!$PERL56) {
+    my $o = $io->object_2svref();
+    my $fd = ref($o) eq 'IO::Handle' ? 99 : $o->fileno();
+    bwarn( "io $ix perlio($fd) ".ref($o) ) if $fd == 99;
+    my $i = 0;
+    foreach (qw(stdin stdout stderr)) {
+      if ($io->IsSTD($_) or $fd == -$i) { # negative stdout: closed or not yet init
+	nice1 "-perlio_$_($fd)-";
+	# bwarn( "io $ix perlio_$_($fd)" );
+	asm "xio_flags",  $io->IoFLAGS;
+	asm "xio_ifp",    $i;
+      }
+      $i++;
+    }
+  }
 }
 
 sub B::CV::bsave {
@@ -645,7 +664,7 @@ sub B::GV::desired {
   my $gv = shift;
   my ( $cv, $form );
   if ( $debug{Gall} and !$PERL510 ) {
-    select *STDERR;	
+    select *STDERR;
     eval "require B::Debug;";
     $gv->debug;
     select *STDOUT;
@@ -1105,6 +1124,7 @@ sub compile {
   my ( $head, $scan, $keep_syn, $module );
   my $cwd = '';
   $files{$0} = 1;
+  $DB::single=1 if defined &DB::DB;
   # includeall mode (without require):
   if ($includeall) {
     # add imported symbols => values %INC
@@ -1435,7 +1455,7 @@ modified by Benjamin Stuhl <sho_pi@hotmail.com>.
 
 Rewritten by Enache Adrian <enache@rdslink.ro>, 2003 a.d.
 
-Enhanced by Reini Urban <rurban@cpan.org>, 2008-
+Enhanced by Reini Urban <rurban@cpan.org>, 2008-2011
 
 =cut
 

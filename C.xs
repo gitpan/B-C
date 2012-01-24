@@ -13,13 +13,18 @@
 # define RX_EXTFLAGS(prog) ((prog)->extflags)
 #endif
 
-typedef struct magic* B__MAGIC;
-typedef SV* B__REGEXP;
+typedef struct magic  *B__MAGIC;
+#if PERL_VERSION >= 11
+typedef struct p5rx  *B__REGEXP;
+#endif
+#if PERL_VERSION >= 15
+typedef COP  *B__COP;
+#endif
 
 static int
 my_runops(pTHX)
 {
-    HV* regexp_hv = get_hv( "B::C::REGEXP", 0 );
+    HV* regexp_hv = get_hv( "B::C::Regexp", 0 );
     SV* key = newSViv( 0 );
 
     DEBUG_l(Perl_deb(aTHX_ "Entering new RUNOPS level (B::C)\n"));
@@ -34,12 +39,15 @@ my_runops(pTHX)
 			      "WARNING: %"UVxf" changed from %"UVxf" to %"UVxf"\n",
 			      PTR2UV(PL_watchaddr), PTR2UV(PL_watchok),
 			      PTR2UV(*PL_watchaddr));
-#if PERL_VERSION > 7
+#if defined(DEBUGGING) \
+   && !(defined(_WIN32) || (defined(__CYGWIN__) && (__GNUC__ > 3)) || defined(AIX))
+# if (PERL_VERSION > 7)
 	    if (DEBUG_s_TEST_) debstack();
 	    if (DEBUG_t_TEST_) debop(PL_op);
-#else
+# else
 	    DEBUG_s(debstack());
 	    DEBUG_t(debop(PL_op));
+# endif
 #endif
 	}
 
@@ -112,6 +120,19 @@ RX_EXTFLAGS(rx)
 
 #endif
 
+MODULE = B	PACKAGE = B::COP	PREFIX = COP_
+
+#if (PERL_VERSION >= 15) && defined(USE_ITHREADS) && defined(CopSTASH_flags)
+
+#define COP_stashflags(o)	CopSTASH_flags(o)
+
+U32
+COP_stashflags(o)
+	B::COP	o
+
+#endif
+
+
 MODULE=B__C 	PACKAGE=B::C
 
 PROTOTYPES: DISABLE
@@ -149,6 +170,7 @@ method_cv(meth, packname)
         RETVAL
 
 #endif
+
 
 BOOT:
     PL_runops = my_runops;

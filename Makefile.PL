@@ -2,6 +2,7 @@ use ExtUtils::MakeMaker;
 use Config;
 use File::Spec;
 use 5.006;
+use Carp;
 
 my $core = grep { $_ eq 'PERL_CORE=1' } @ARGV;
 
@@ -10,7 +11,11 @@ my $core = grep { $_ eq 'PERL_CORE=1' } @ARGV;
 system($^X, "bytecode.pl");
 
 my ($use_declare_independent_comalloc, $extra_cflags, $extra_libs) = (0, "", "");
-my $have_independent_comalloc = &check_independent_comalloc;
+my $have_independent_comalloc = check_independent_comalloc();
+if (grep { $_ eq 'INSTALL_PTMALLOC3' } @ARGV) {
+    install_independent_comalloc() ;
+    $have_independent_comalloc = check_independent_comalloc();
+}
 {
     my ($e_c) = grep { /-extra-cflags[= ](.+)/ } @ARGV;
     my ($e_l) = grep { /-extra-libs[= ](.+)/ } @ARGV;
@@ -86,7 +91,7 @@ WriteMakefile(
                "bytecode[0-9]* ".
                "lib/B/Asmdata.pm script/perlcc ccode* cccode* Ccode* ".
  	       "*.core *.stackdump a.out a.exe *.cee *.c *.asm *.dbg *.plc *.obj ".
-               "*.concise *~ dll.base dll.exp mod.pl pcc* *.bak *.a"
+               "*.concise *~ dll.base dll.exp mod.pl pcc* *.bak *.a rename POSIX"
              },
 );
 
@@ -100,13 +105,17 @@ sub headerpath {
 }
 
 # Check for Doug Lea's dlmalloc version, or ptmalloc2 included in glibc
-# or an extra ptmalloc3.
+# or the best: ptmalloc3 with independent_comalloc().
+# http://www.malloc.de/malloc/ptmalloc3-current.tar.gz
 # This improves -fav-init startup speed dramatically (18% tested).
 # ptmalloc3 needs #include <malloc-2.8.3.h>, but we don't want to clash
 # with an existing malloc.h from perl.h, so we declare it by ourselves.
 sub try_compile {
     my $testc = shift;
     my $libs = shift;
+    # For consistency (without considering LD_PRELOAD) require perl to
+    # be compiled with the same malloc library.
+    return 0 unless $Config{libs} =~ /\b\Q$lib\E\b/;
     unless (open PROG, ">", "test.c") {
         print ("Can't write test.c\n");
         return 0;
@@ -127,7 +136,7 @@ sub try_compile {
 }
 
 sub check_independent_comalloc {
-    my $testc = "
+    my $testori = "
 #include <stdlib.h>
 #include <malloc.h>
 int main() {
@@ -137,35 +146,82 @@ int main() {
     return 0;
 }
 ";
-    try_compile($testc) and return 1;
+    my $testc = $testori;
+    if (try_compile($testc)) {
+	warn "-fav-init2 available: independent_comalloc() as-is activated\n";
+	return 1;
+    }
 
     my @extra_libs = ("-lptmalloc3", "-lptmalloc", "-ldlmalloc", "-lnedmalloc");
     for my $lib (@extra_libs) {
         $lib =~ s/^-l(.+)$/lib$1.lib/ if $^O eq 'MSWin32';
         if (try_compile($testc, $lib)) {
             $extra_libs = " $lib";
+	    warn "-fav-init2 available: independent_comalloc() with $lib activated\n";
             return 1;
         }
     }
-
-    my $testc =~ s/#include <malloc.h>/void** dlindependent_comalloc(size_t, size_t*, void**);/;
+    # try without the ptmalloc3 header, just the library
+    $testc =~ s/#include <malloc>/void** dlindependent_comalloc(size_t, size_t*, void**);/;
     for my $lib (@extra_libs) {
         $lib =~ s/^-l(.+)$/lib$1.lib/ if $^O eq 'MSWin32';
         if (try_compile($testc, $lib)) {
             $extra_libs = " $lib";
             $use_declare_independent_comalloc = 1;
+	    warn "-fav-init2 available: dlindependent_comalloc() with $lib activated\n";
             return 1;
         }
     }
-
+    # Desperate. External ptmalloc3 header to overcome -I path shadowing
+    $testc = $testori;
+    $testc =~ s/#include <malloc.h>/#include "malloc-2.8.3.h"/;
+    for my $lib ("-lptmalloc3") {
+        $lib =~ s/^-l(.+)$/lib$1.lib/ if $^O eq 'MSWin32';
+        if (try_compile($testc, $lib)) {
+            $extra_cflags = " -DNEED_MALLOC_283";
+            $extra_libs = " $lib";
+	    warn "-fav-init2 available: independent_comalloc() with -DNEED_MALLOC_283 $lib activated\n";
+            return 1;
+        }
+    }
+    #warn "-fav-init2 not available, independent_comalloc() not detected.\n";
+    #warn "  Install on POSIX systems with:\n";
+    #warn "  $^X Makefile.PL INSTALL_PTMALLOC3\n\n";
     return 0;
+}
+
+sub _system{
+    print join(" ",@_),"\n";
+    local $!;
+    system @_;
+    croak $! if $!;
+}
+
+sub install_independent_comalloc {
+    print "INSTALL_PTMALLOC3 from <http://www.malloc.de/en/index.html>\n";
+    -f 'ptmalloc3-current.tar.gz'
+      or _system(qw(wget http://www.malloc.de/malloc/ptmalloc3-current.tar.gz));
+    -d 'ptmalloc3'
+      or _system('tar xfz ptmalloc3-current.tar.gz');
+    chdir "ptmalloc3" or die;
+    if ($Config{useithreads}) { 
+	# linux-pthread is basically the same. linux-shared is also an option.
+	# just Solaris, SGI and HPUX need different options.
+	_system(qw(make posix));
+    } else {
+	_system(qw(make nothreads));
+    }
+    _system('make check');
+    _system('sudo cp libptmalloc3.a /usr/lib/');
+    warn "No you must recompile your perl with linking to this library\n";
+    chdir "..";
 }
 
 package MY;
 
 sub libscan {
     # Ignore temp testing files
-    return 0 if $_[1] =~ /^(.svn|jit.*|i386|.*\.orig|bytecode.*\.pl|c?ccode.*|regen_lib\.pl)$/;
+    return 0 if $_[1] =~ /^(\.git|\.svn|jit.*|i386|.*\.orig|bytecode.*\.pl|c?ccode.*|regen_lib\.pl)$/;
     return 0 if $_[1] =~ /\.svn|~/; # needed for msys perl5.6
     # Ignore Bytecode on 5.6 for now. The 5.6 CORE module produces better code (until fixed :)
     # Not even the Byteloader works for 5.6 assembled code. The Disassembler does not stop at ret.
@@ -195,7 +251,7 @@ sub ccflags {
     my $ccflags = shift->SUPER::ccflags(@_);
     $ccflags .= " -DHAVE_INDEPENDENT_COMALLOC" if $have_independent_comalloc;
     $ccflags .= $extra_cflags if $extra_cflags;
-    return $ccflags unless -d ".svn";
+    return $ccflags unless -d ".svn" or -d ".git";
     # Recommended by http://www.network-theory.co.uk/docs/gccintro/gccintro_32.html
     # -ansi -pedantic -Wall -W -Wconversion -Wshadow -Wcast-qual -Wwrite-strings (-W => -WExtra)
     $ccflags .= " -ansi -pedantic -Wall -Wextra -Wconversion -Wshadow -Wcast-qual -Wwrite-strings"

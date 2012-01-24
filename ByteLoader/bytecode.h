@@ -120,7 +120,7 @@ static int bget_swab = 0;
 #define BGET_OR_CROAK(arg, type) STMT_START {				\
 	if (BGET_FREAD(&arg, sizeof(type), 1) < 1) {			\
 	    Perl_croak(aTHX_						\
-		       "EOF or error while trying to read %d bytes for %s", \
+		       "EOF or error while trying to read %lu bytes for %s", \
 		       sizeof(type), STRINGIFY(type));			\
 	}								\
     } STMT_END
@@ -523,19 +523,26 @@ static int bget_swab = 0;
 #else
 /* See op.c:Perl_newSTATEOP. Test 21 */
 # if (PERL_VERSION < 13) || ((PERL_VERSION == 13) && (PERL_SUBVERSION < 5))
-#  if defined(_WIN32) || (defined(__CYGWIN__) && (__GNUC__ > 3)) || defined(AIX)
+#  if defined(_WIN32) || defined(AIX)
 #   define BSET_cop_label(cop, arg)      /* Unlucky. Not exported with 5.12 and 5.14 */
-#   error "store_cop_label is not part of the public API for your perl. Try a perl <5.12 or >5.15"
+    /* XXX Check in Makefile.PL if patched. cygwin has -Wl=export-all-symbols */
+#   error "cop_label is not part of the public API for your perl. Try a perl <5.12 or >5.15"
 #  else
 #   define BSET_cop_label(cop, arg)	(cop)->cop_hints_hash = \
         Perl_store_cop_label(aTHX_ (cop)->cop_hints_hash, arg)
 #  endif
 # else /* officially added with 5.15.1 aebc0cbee */
 #  if  (PERL_VERSION > 15) || ((PERL_VERSION == 15) && (PERL_SUBVERSION > 0))
-#    define BSET_cop_label(cop, arg)	Perl_cop_store_label(aTHX_ (cop), arg, strlen(arg), 0)
+#   define BSET_cop_label(cop, arg)	Perl_cop_store_label(aTHX_ (cop), arg, strlen(arg), 0)
 #  else
-/* changed with 5.13.4-5 a77ac40c5b8 */
+/* changed (macro -> function) with 5.13.4-5 a77ac40c5b8. Windows still out of luck.
+   XXX Check in Makefile.PL if patched. cygwin has -Wl=export-all-symbols */
+#   if defined(_WIN32) || defined(AIX)
+#    define BSET_cop_label(cop, arg)
+#    error "cop_label is not part of the public API for your perl. Try a perl <5.12 or >5.15"
+#   else
 #    define BSET_cop_label(cop, arg)	Perl_store_cop_label(aTHX_ (cop), arg, strlen(arg), 0)
+#   endif
 #  endif
 # endif
 #endif
@@ -692,6 +699,18 @@ static int bget_swab = 0;
 #define BSET_op_pmflags(r, arg)	STMT_START {		\
 	r = arg;					\
 	} STMT_END
+
+/* restore dups for stdin, stdout and stderr */
+#define BSET_xio_ifp(sv,fd)						\
+    STMT_START {							\
+      if (fd == 0) {							\
+	IoIFP(sv) = IoOFP(sv) = PerlIO_stdin();				\
+      } else if (fd == 1) {						\
+	IoIFP(sv) = IoOFP(sv) = PerlIO_stdout();			\
+      } else if (fd == 2) {						\
+	IoIFP(sv) = IoOFP(sv) = PerlIO_stderr();			\
+      }									\
+    } STMT_END
 
 
 /* NOTE: The bytecode header only sanity-checks the bytecode. If a script cares about

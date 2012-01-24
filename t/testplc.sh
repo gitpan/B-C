@@ -301,8 +301,10 @@ result[44]='ok'
 # test dynamic loading
 tests[45]='use Data::Dumper ();Data::Dumper::Dumpxs({});print "ok";'
 result[45]='ok'
-# Exporter should end up in main:: stash when used in
-tests[46]='use Exporter; if (exists $main::{"Exporter::"}) { print "ok"; }'
+# issue 79: Exporter:: stash missing in main::
+#tests[46]='use Exporter; if (exists $main::{"Exporter::"}) { print "ok"; }'
+tests[46]='use Exporter; print "ok" if %main::Exporter::'
+#tests[46]='use Exporter; print "ok" if scalar(keys(%main::Exporter::))'
 result[46]='ok'
 # non-tied av->MAGICAL
 tests[47]='@ISA=(q(ok));print $ISA[0];'
@@ -326,7 +328,41 @@ result[70]='ok'
 # issue24
 tests[71]='dbmopen(%H,q(f),0644);print q(ok);'
 result[71]='ok'
-
+tests[81]='sub int::check {1}    #create int package for types
+sub x(int,int) { @_ } #cvproto
+print "o" if prototype \&x eq "int,int";
+sub y($) { @_ } #cvproto
+print "k" if prototype \&y eq "\$";'
+result[81]='12'
+tests[90]='my $s = q(test string);
+$s =~ s/(?<first>test) (?<second>string)/\2 \1/g;
+print q(o) if $s eq q(string test);
+q(test string) =~ /(?<first>\w+) (?<second>\w+)/;
+print q(k) if $+{first} eq q(test);'
+result[90]='ok'
+# IO handles
+tests[93]='
+my ($pid, $out, $in);
+BEGIN {
+  local(*FPID);
+  $pid = open(FPID, "echo <<EOF |");    # DIE
+  open($out, ">&STDOUT");		# EASY
+  open(my $tmp, ">", "pcc.tmp");	# HARD to get filename, WARN
+  print $tmp "test\n";
+  close $tmp;				# OK closed
+  open($in, "<", "pcc.tmp");		# HARD to get filename, WARN
+}
+# === run-time ===
+print $out "o";
+kill 0, $pid; 			     # BAD! warn? die?
+print "k" if "test" eq read $in, my $x, 4;
+unlink "pcc.tmp";
+'
+result[93]='ok'
+tests[931]='my $f;BEGIN{open($f,"<README");}read $f,my $in, 2; print "ok"'
+result[931]='ok'
+tests[932]='my $f;BEGIN{open($f,">&STDOUT");}print $f "ok"'
+result[932]='ok'
 
 init
 
@@ -348,7 +384,7 @@ done
 if [ -z "$Q" ]; then
     make
 else
-    make --silent >/dev/null
+    make -s >/dev/null
 fi
 
 # need to shift the options

@@ -172,17 +172,17 @@ ok
 # Shared scalar, n magic. => Don't know how to handle magic of type \156.
 # ;threads->create(sub{$s="ok"})->join;
 # not yet testing n, only P
-use threads; use threads::shared;{my $s="ok";share($s);print $s}
+use threads::shared;{my $s="ok";share($s);print $s}
 >>>
 ok
 #### 41 n-magic ####
 # Shared aggregate, P magic
-use threads; use threads::shared;my %h : shared; print "ok"
+use threads::shared;my %h : shared; print "ok"
 >>>
 ok
 #### 42 P-magic ####
 # Aggregate element, n + p magic
-use threads; use threads::shared;my @a : shared; $a[0]="ok"; print $a[0]
+use threads::shared;my @a : shared; $a[0]="ok"; print $a[0]
 >>>
 ok
 #### 43 n+p magic ####
@@ -190,15 +190,15 @@ ok
 use Scalar::Util "weaken";my $re1=qr/foo/;my $re2=$re1;weaken($re2);print "ok" if $re3=qr/$re1/;
 >>>
 ok
-#### 44 weaken TODO not imported ####
+#### 44 weaken not imported ####
 use Data::Dumper ();Data::Dumper::Dumpxs({});print "ok";
 >>>
 ok
 #### 45 test dynamic loading ####
-use Exporter; if (exists $main::{"Exporter::"}) { print "ok"; }
+use Exporter; print q(ok) if %main::Exporter::
 >>>
 ok
-#### 46 Exporter should end up in main:: stash when used in ####
+#### 46 Exporter:: store stashes only with -fstash. issue 79.  ####
 @ISA=(q(ok));print $ISA[0];
 >>>
 ok

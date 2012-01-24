@@ -475,6 +475,7 @@ sub run_cc_test {
 	    $command =~ s/ -opt:ref,icf//;
 	}
         my $cmdline = "$Config{cc} $command $NULL";
+	diag ($cmdline) if $ENV{TEST_VERBOSE} and $ENV{TEST_VERBOSE} == 2;
         run_cmd($cmdline, 20);
         unless (-e $exe) {
             print "not ok $cnt $todo failed $cmdline\n";
@@ -544,7 +545,7 @@ sub run_c_tests {
     my @skip = @{$_[2]};
 
     use Config;
-    my $AUTHOR      = -d ".svn";
+    my $AUTHOR      = -d ".svn" or -d ".git";
     my $keep_c      = 0;	  # set it to keep the pl, c and exe files
     my $keep_c_fail = 1;          # keep on failures
 
@@ -584,6 +585,7 @@ use blib;use B::CC;my int $r;my $i:int=2;our double $d=3.0; $r=$i*$i; $r*=$d; pr
 12
 ######### 105 CC attrs ###############################
 CCTESTS
+
         my $i = 100;
         for (split /\n####+.*##\n/, $cctests) {
             next unless $_;
@@ -613,16 +615,54 @@ CCTESTS
             (!$AUTHOR
              or ($cnt==15 and $backend eq 'C,-O1')   # hanging
              or ($cnt==103 and $backend eq 'CC,-O2') # hanging
-             # or ($cnt==14 or $cnt==18)
             ))
         {
             print sprintf("ok %d # skip\n", $cnt);
         } else {
             my ($script, $expect) = split />>>+\n/;
 	    die "Invalid empty t/TESTS" if !$script or $expect eq '';
-            run_cc_test($cnt, $backend, $script, $expect, $keep_c, $keep_c_fail, $todo);
+            run_cc_test($cnt, $backend.($cnt == 46 ? ',-fstash' : ''),
+			$script, $expect, $keep_c, $keep_c_fail, $todo);
         }
         $cnt++;
+    }
+}
+
+sub plctestok {
+    my ($num, $base, $script, $todo) =  @_;
+    plctest($num,'^ok', $base, $script, $todo);
+}
+
+sub plctest {
+    my ($num, $expected, $base, $script, $todo) =  @_;
+
+    my $name = $base."_$num";
+    unlink($name, "$name.plc", "$name.pl", "$name.exe");
+    open F, ">", "$base.pl";
+    print F $script;
+    close F;
+
+    my $runperl = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
+    my $b = $] > 5.008 ? "-qq,Bytecode" : "Bytecode";
+    system "$runperl -Iblib/arch -Iblib/lib -MO=$b,-o$name.plc $base.pl";
+    unless (-e "$name.plc") {
+        print "not ok $num #B::Bytecode failed\n";
+        exit;
+    }
+    my $out = qx($runperl -Mblib -MByteLoader $name.plc);
+    chomp $out;
+    my $ok = $out =~ /$expected/;
+    if ($todo and $todo =~ /TODO/) {
+	$todo =~ s/TODO //;
+      TODO: {
+	    local $TODO = $todo;
+	    ok($ok);
+	}
+    } else {
+	ok($ok, "Bytecode $base".($todo ? " $todo" : ''));
+    }
+    if ($ok) {
+        unlink("$name.plc", "$base.pl");
     }
 }
 
@@ -642,6 +682,7 @@ sub ctest {
 
     my $runperl = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
     my $b = $] > 5.008 ? "-qq,$backend" : "$backend";
+    $b .= q(,-fno-fold,-fno-warnings) if $] >= 5.013005;
     system "$runperl -Iblib/arch -Iblib/lib -MO=$b,-o$name.c $name.pl";
     unless (-e "$name.c") {
         print "not ok $num #B::$backend failed\n";
@@ -650,13 +691,14 @@ sub ctest {
     system "$runperl -Iblib/arch -Iblib/lib blib/script/cc_harness -q -o $name $name.c";
     my $exe = $name.$Config{exe_ext};
     unless (-e $exe) {
-        if ($todo) {
+	if ($todo and $todo =~ /TODO/) {
+	    $todo =~ s/TODO //;
           TODO: {
                 local $TODO = $todo;
                 ok(undef, "failed to compile");
             }
         } else {
-            ok(undef, "failed to compile");
+            ok(undef, "failed to compile $todo");
         }
         return;
     }
@@ -669,20 +711,22 @@ sub ctest {
         unless ($ok) { #crosscheck uncompiled
             my $out1 = `$runperl $name.pl`;
             unless ($out1 =~ /$expected/) {
-                ok(1, "skip also fails uncompiled");
+                ok(1, "skip also fails uncompiled $todo");
                 return;
             }
         }
-        if ($todo) {
+	if ($todo and $todo =~ /TODO/) {
+	    $todo =~ s/TODO //;
           TODO: {
                 local $TODO = $todo;
                 ok ($out =~ /$expected/);
             }
         } else {
-            ok ($out =~ /$expected/);
+            ok ($out =~ /$expected/, $todo);
         }
     } else {
-        if ($todo) {
+	if ($todo and $todo =~ /TODO/) {
+	    $todo =~ s/TODO //;
           TODO: {
                 local $TODO = $todo;
                 ok (undef);
@@ -694,7 +738,7 @@ sub ctest {
                 ok(1, "skip also fails uncompiled");
                 return;
             }
-	    ok (undef);
+	    ok (undef, $todo);
 	}
     }
     unlink("$name.pl");
@@ -720,13 +764,14 @@ sub ccompileok {
     }
     system "$runperl -Iblib/arch -Iblib/lib blib/script/cc_harness -q -o $name $name.c";
     my $ok = -e $name or -e "$name.exe";
-    if ($todo) {
+    if ($todo and $todo =~ /TODO/) {
       TODO: {
+	    $todo =~ s/TODO //;
             local $TODO = $todo;
             ok($ok);
         }
     } else {
-        ok($ok);
+        ok($ok, $todo);
     }
     unlink("$name.pl");
     if ($ok) {
@@ -739,86 +784,55 @@ sub todo_tests_default {
     my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
     my $ITHREADS  = ($Config{useithreads});
 
-    my @todo  = (41..43,46); # 8,14-16 fail on 5.00505 (max 20 then)
-    push @todo, (103)  if $] < 5.007 or $] >= 5.010;
-    #push @todo, (29)   if $] >= 5.010 and !$DEBUGGING;
-    #push @todo, (29)   if $] >= 5.013006;
-    #push @todo, (15);
+    my @todo  = ();
     # split->pushre->pmreplroot as int. bug in B walker
-    push @todo, (7)   if $] > 5.008 and $] < 5.008008 and $ITHREADS;
-    # 5.15 empty HV fixed with r1124
-    #push @todo, (3,4,36) if $] >= 5.015; # Assert array: Perl_hfree_next_entry hv.c:1716
-    #push @todo, (16,39,44,45) if $] >= 5.015002 and !$ENV{DL_NOWARN};  # DynaLoader 5.15.2 issue
-    # 15 passes on cygwin XP, but fails on cygwin Win7
-    push @todo, (15) if $] > 5.013 or $] < 5.007;
+    # push @todo, (7)   if $] > 5.008 and $] < 5.008008; # and $ITHREADS;
+    push @todo, (15)  if $] < 5.007;
     if ($what =~ /^c(|_o[1-4])$/) {
-        # 14+23 fixed with 1.04_29, for 5.10 with 1.04_31
-        # 15+28 fixed with 1.04_34
-        # 5.6.2 CORE: 8,15,16,22. 16 fixed with 1.04_24, 8 with 1.04_25
-        # 5.8.8 CORE: 11,14,15,20,23 / non-threaded: 5,7-12,14-20,22-23,25
-        # @todo = (15,35,39,44,46)    if $] < 5.010;
-        # fixed with 1.30
-        # push @todo, (45)   if $] > 5.007;
-        # fixed with 1.30
-        # push @todo, (39)   if $] > 5.007 and $] < 5.009;
-        # fixed with 1.30
-        # push @todo, (21)   if $] > 5.011 and $] < 5.013;
-	push @todo, (13)     if $] > 5.009 and $what =~ /c_o[34]/;
-        #push @todo, (29)    if $] > 5.009 and $] < 5.012;
-        push @todo, (48)    if $what eq 'c_o4' and $] < 5.010;
-        # push @todo, (28,48) if $what =~ /c_o[34]/  and $] < 5.014;
-        push @todo, (21)    if $] > 5.011 and $] <= 5.013006;
-        #push @todo, (25)   if $] =~ /5\.012/ and $DEBUGGING and $ITHREADS; # linux only
-        # c.t fixed with 1.30
-        # push @todo, (16,44,45) if $] > 5.013 and !$DEBUGGING and !$ITHREADS;
-        # push @todo, (10,12) if $what =~ /c_o[234]/ and $] >= 5.010 and $] < 5.015;
-	# fixed with 1.35
-        # push @todo, (11)    if $what =~ /c_o[1234]/ and $] < 5.010;
-        push @todo, (44,45) if $] < 5.009;
-        #push @todo, (29,44,45) if $what =~ /c_o[234]/;
+        push @todo, (50)    if $] >= 5.010 and $] < 5.012 and $what =~ /c_o[4]/;
+        push @todo, (21)    if $] >= 5.012 and $] < 5.014;
+        push @todo, (15)    if $] > 5.010 and $ITHREADS;
+
 	# @ISA issue 64
-        push @todo, (15,50)  if $what eq 'c_o4'; 
-        #push @todo, (10)    if $what =~ /c_o[234]/ and $] >= 5.010;
-        #push @todo, (34)    if $what =~ /c_o[34]/  and $] > 5.011 and $] <= 5.013;
-        #push @todo, (19)    if $what eq 'c_o2' and $ITHREADS;
-        push @todo, (11)    if $what =~ /c_o[1234]/
-	  and $] > 5.007 and $] < 5.009 and !$ITHREADS;
-	push @todo, (10,12,19,25) if $what eq 'c_o4';
+        push @todo, (10,12,19,25,50)  if $what eq 'c_o4';
+        #push @todo, (48)    if $what eq 'c_o4' and $] < 5.010;
+        # push @todo, (50) if $] > 5.013  and $what eq 'c' and !$ITHREADS;
 	# issue 78 error at DynaLoader (require Carp + invalid version)
-        push @todo, (29,44,45) if $] > 5.015 and $what =~ /c_o[34]/;
+        #push @todo, (29,44,45) if $] > 5.015 and $what =~ /c_o[34]/;
+	# DynaLoader::dl_load_file()
+        push @todo, (15,27,29,41..45,49) if $] > 5.015 and $what eq 'c_o4';
     } elsif ($what =~ /^cc/) {
-        # 8,11,14..16,18..19 fail on 5.00505 + 5.6, old core failures (max 20)
-        # on cygwin 29 passes
-        push @todo, (21,30,50); # fixed 44 -nt
-	push @todo, (3)     if $] > 5.008 and $] <= 5.008005;
-	push @todo, (16)    if $] <= 5.008005;
-        push @todo, (44)    if $ITHREADS or $] < 5.012;
+	# 8,11,14..16,18..19 fail on 5.00505 + 5.6, old core failures (max 20)
+	# on cygwin 29 passes
+	#15,21,27,30,41-45,50,103,105
+	push @todo, (21,30,46,50,103,105);
+	push @todo, (3,7,15,41,44,45) if $] > 5.008 and $] <= 5.008005;
+	push @todo, (15)    if $] < 5.008008 or $] >= 5.010;
+	push @todo, (14)    if $] >= 5.012;
+
+	#push @todo, (44)    if $ITHREADS or $] < 5.012;
         #push @todo, (44)   if !$ITHREADS and $] >= 5.012;
-	push @todo, (7)     if $] > 5.008 and $] < 5.008008; # only know 5.8.4 and 5.8.5
-        push @todo, (105)   if $] > 5.008005 and $] < 5.010;
-        push @todo, (10,16) if $what eq 'cc_o2';
-        push @todo, (27)    if $] < 5.007 and $what eq 'cc_o2';
-        push @todo, (45)    if $] < 5.007;
-        push @todo, (104,105) if $] < 5.007; # leaveloop, no cxstack
-        push @todo, (11,45,103,105) if $] > 5.007 and $] < 5.009;
+	push @todo, (104,105) if $] < 5.007; # leaveloop, no cxstack
+	push @todo, (10,16) if $what eq 'cc_o2';
+	#push @todo, (103)   if $] > 5.007 and $] < 5.009 and $what eq 'cc_o1';
 	# only tested 5.8.4 and .5
-	push @todo, (3)     if $] > 5.008 and $] < 5.008005 and $what =~ /^cc_o[12]/;
-        push @todo, (29)    if $] < 5.008006 or ($] > 5.013 and $] < 5.015);
-        #push @todo, (11,27) if $] < 5.009;
-        push @todo, (14)    if $] >= 5.010 and $^O !~ /MSWin32|cygwin/i;
-        # solaris also. I suspected nvx<=>cop_seq_*
-        push @todo, (12)    if $^O eq 'MSWin32' and $Config{cc} =~ /^cl/i;
-        #push @todo, (3,4,27,42,43) if $] >= 5.011004 and $ITHREADS;
-        push @todo, (26)    if $what =~ /^cc_o[12]/;
-        push @todo, (27)    if $] < 5.010 and $what eq 'cc_o2';
-        push @todo, (105)   if $] >= 5.010;
-        push @todo, (25)    if $] >= 5.011004 and $DEBUGGING and $ITHREADS;
-        push @todo, (3,4)   if $] >= 5.011004 and $ITHREADS;
-        push @todo, (103)   if $] >= 5.012 and $ITHREADS;
-        #push @todo, (49)    if $] >= 5.013009 and $] < 5.015 and !$ITHREADS; # fixed with r1142
+	push @todo, (29)    if $] < 5.008006 or ($] > 5.013 and $] < 5.015);
+	#push @todo, (11,27) if $] < 5.009;
+	push @todo, (14)    if $] >= 5.010 and $^O !~ /MSWin32|cygwin/i;
+	# solaris also. I suspected nvx<=>cop_seq_*
+	push @todo, (12)    if $^O eq 'MSWin32' and $Config{cc} =~ /^cl/i;
+	#push @todo, (3,4,27,42,43) if $] >= 5.011004 and $ITHREADS;
+	push @todo, (26)    if $what =~ /^cc_o[12]/;
+	push @todo, (27)    if $] <= 5.008008;
+	push @todo, (25)    if $] >= 5.011004 and $DEBUGGING and $ITHREADS;
+	push @todo, (3,4)   if $] >= 5.011004 and $ITHREADS;
+	#push @todo, (103)   if $] >= 5.012 and $ITHREADS;
+	#push @todo, (49)    if $] >= 5.013009 and $] < 5.015 and !$ITHREADS; # fixed with r1142
+	push @todo, (49)    if $] >= 5.013009 and !$ITHREADS; #not
     }
+    #push @todo, (12)   if $] >= 5.015007 and $ITHREADS;
     push @todo, (48)   if $] > 5.007 and $] < 5.009 and $^O =~ /MSWin32|cygwin/i;
-    push @todo, (25)   if $] eq "5.010001" and !$DEBUGGING and $ITHREADS;
+    #push @todo, (25)   if $] eq "5.010001" and !$DEBUGGING and $ITHREADS;
     #push @todo, (25)   if $] >= 5.010 and $] < 5.012 and !$ITHREADS;
     #push @todo, (32)  if $] >= 5.011003;
     return @todo;

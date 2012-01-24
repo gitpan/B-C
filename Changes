@@ -3,13 +3,107 @@
 	The Perl compiler was in CORE from alpha4 until Perl 5.9.4
 	and worked quite fine with Perl 5.6 and 5.8
 
+1.37	2012-01-24 rurban
+	Enabled copy-on-grow strings >= 5.10.
+	Save %main:: stashes w/o -fno-stash. Switched to git, added github mirror
+	Fixed hashes and share_hek, when mixed compiled and load-time for >5.8.
+
+	Stability: This release is the first which passes almost all tests and
+	is used in production with --staticxs -O3, but copy-on-grow hek's and
+	further logical improvements (deferred %INC cleanup) fail so far, so it's
+	still considered unstable.
+
+	* C: save stashes optionally with -fstash, but only values which are also
+	  stashes to avoid a second walker besides savecv, and thus do not
+	  walk into unneeded territory; B::STASHGV (46, issue 79)
+	New -fno-stash with -O2 to omit stashes which are rarely needed.
+	Fixed vulnerability to oCERT-2011-003 style DOS attacks. Do not
+	  pre-compute hashes for hv_store(), use fresh random hash seed.
+	  But shared_hek() has a limited API which does not allow this.
+	UNIVERSAL methods were not correctly stored, which led to method not
+	  found at run-time errors.
+	New debug option -Dr "runtime" to add debug output to the .c code (as in CC)
+	New option -Upackage to skip package, mark_skip()
+	Re-implemented sharepvn via share_hek() and SvLEN=0 (issue 71),
+	  Special FAKE+READONLY handling: LEN = 0 if pv_copy_on_grow or shared_hek.
+	  Fixed !SvIsCOW_shared_hash + FAKE+READONLY conflict (test 13, issue 82).
+	  Shared COW hashkeys which are optimized to static const strings
+	  may not be marked as IsCOW (remove SVf_FAKE).
+	Re-implemented CORE share_hek with hash=0
+	  Otherwise shared HEK's (post-5.10) come up with duplicate entries
+	  for the same keys; one compile-time created and one run-time created with
+	  a different random hash seed. E.g. observed by such warnings
+	  "Prototype mismatch: sub bytes::length (_) vs (_)"
+	Added Internals::hv_clear_placeholders XS name exception, similar
+	  to version:: (issue 83)
+	Store CV prototypes, issue 81 and issue 84 for empty () vs NULL prototypes.
+	Fixed 5.15.2 hang at hfree_next_entry (issue 78)
+	Defer writing of READONLY hash keys since 5.15 (issue 88)
+	Enable -fcog copy-on-grow with static strings for >= 5.10
+	Improved Errno vs. *main::! and Tie::Hash::NamedCapture vs
+	  *main::+  / - logic (issue 90)
+	Updated version XS methods, default to noop for (...
+	Strip version object overload from XS packages (issue 91), XS needs plain PVs
+	Do not initialize CONSTSUB XS methods twice, boot does it for us
+	Pass proper cv to XS boot_$name, fixes boot of
+	  Tie::Hash::NamedCapture (issue 86)
+	Fixed share_hek strings with -O1 (test 13)
+	Fixed bootstrapping the XS/core part of attributes,
+	  thereby fixed threads tests 41-43.
+	Fixed most 5.8.[45] problems by ignoring aelemfast SPECIAL pads.
+	Fixed magic -> PTR when SV (>5.6)
+	Moved -fsave-sig-hash from -O3 to -O0. You need -fno-save-sig-hash
+	  to disable it.
+        Removed -fno-stash from -O2, -fno-stash is now the default. You
+	  need -fstash to add stashes. It caused not understood problems.
+	Fixed saving %SIG signals and more -2 SV magic (issue 92)
+	Adjusted IO logic, was erronously skipped (issue 59)
+	inc_cleanup: save only those %INC keys which are stored.
+	Save ext/mro only if the ext mro methods were loaded, and
+	  utf8_heavy.pl similarly.
+	Force loading of -u arguments to avoid runtime loading.
+	Call boot_core_PerlIO, mro, UNIVERSAL and xsutils.
+	Warn on unsavable IO objects from BEGIN blocks.
+	  Fixed >&STD... handles (issue 93),
+	  i.e. Test::Builder, Test::NoWarnings and parts of the core testing.
+	  See http://blogs.perl.org/users/rurban/2012/01/what-to-avoid-in-begin-blocks.html
+	Add B::COP::stashflags workaround, >5.15.4 threaded.
+	Add fix for lost PL_regex_pad, 5.15 threaded.
+	* CC (1.12): allow overriding of -f<opt> B::C flags.
+	Skip internal packages with mark_skip (fixes cc_o2 tests).
+	Move -ftype-attr from -O2 to -O1.
+	Always define int, double and string package versions, parallel to types.
+	* Bytecode (1.12): detect Tie::Hash::NamedCapture (issue 90) -
+	  works only partially.
+	Fixed >&STD... handles (issue 93)
+	Support -d debugging without -MOd
+	* Stackobj (1.00_03): add UL or L to overlong integers. doubles
+	  not yet
+	* perlcc (2.13): added options -O[1-4], -u, -U, --Wc, --Wl, --version,
+	Keep cfile if output is empty.
+	Change -o output C file directory and name with -S or -c:
+	  Before in current directory, now in -o directory.
+	  Before with input name, now with -o name.
+	Add -rpath for all --staticxs libs if supported.
+	Changed verbosity levels and output wording.
+	* bytecode.pl: added xio_ifp
+	* bytecode.h: added BSET_xio_ifp
+	* META.yml: remove from MANIFEST and repo, let make dist
+	  autogenerate it.
+	* t/test.pl, t/TESTS: changed test 46 (Exporter:: and other stashes in
+	  %main:: stash) to cover issue 79.
+	  use Exporter; print q(ok) if %main::Exporter::
+	* t/test.pl: use general comments with optional TODO. Before only TODO
+	* t/perldoc.t: fixed for 5.8 with manually adding -uFile::Spec -uIO::Handle
+	* t/issue59.t, t/issue81.t, t/issue90.t, t/issue93.t: added
+
 1.36	2011-10-19 rurban
 	lexical warnings and more 5.15 fixes
 	* C: new B::LEXWARN, fixed representation of lexical warnings which was broken
 	  since 8e01d9a6  5.8.9/5.9.4 (issue 76)
-	added section free, use it for lexical cop_warnings (const STRLEN*)
+	Added section free, use it for lexical cop_warnings (const STRLEN*)
 	  (TODO: static PV, HEK + COPs)
-	workaround for utf8::SWASHNEW adjusted to 5.15
+	Workaround for utf8::SWASHNEW adjusted to 5.15
 	PAD* sv flags changed in 5.15.3
 	XSLoader API changed (HEK in caller i.e.): had to add a
 	  XSLoader::load_file for [perl #101336] >= 5.15.3,

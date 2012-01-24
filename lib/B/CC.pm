@@ -3,6 +3,7 @@
 #      Copyright (c) 1996, 1997, 1998 Malcolm Beattie
 #      Copyright (c) 2009, 2010, 2011 Reini Urban
 #      Copyright (c) 2010 Heinz Knutzen
+#      Copyright (c) 2012 cPanel Inc
 #
 #      You may distribute under the terms of either the GNU General Public
 #      License or the Artistic License, as specified in the README file.
@@ -62,6 +63,13 @@ options. The compiler tries to figure out which packages may possibly
 have subs in which need compiling but the current version doesn't do
 it very well. In particular, it is confused by nested packages (i.e.
 of the form C<A::B>) where package C<A> does not contain any subs.
+
+=item B<-UPackname>  "unuse" skip Package
+
+Ignore all subs from Package to be compiled.
+
+Certain packages might not be needed at run-time, even if the pessimistic
+walker detects it.
 
 =item B<-mModulename>
 
@@ -236,9 +244,13 @@ Add Flags info to the code.
 
 =cut
 
+
 package B::CC;
 
-our $VERSION = '1.11';
+our $VERSION = '1.12';
+
+# Start registering the L<types> namespaces.
+$int::VERSION = $double::VERSION = $string::VERSION = '0.01';
 
 use Config;
 use strict;
@@ -251,9 +263,9 @@ use B qw(main_start main_root class comppadlist peekop svref_2object
   OPpDEREF OPpFLIP_LINENUM G_VOID G_SCALAR G_ARRAY
 );
 #CXt_NULL CXt_SUB CXt_EVAL CXt_SUBST CXt_BLOCK
-use B::C qw(save_unused_subs objsym init_sections mark_unused
+use B::C qw(save_unused_subs objsym init_sections mark_unused mark_skip
   output_all output_boilerplate output_main output_main_rest fixup_ppaddr save_sig
-  svop_or_padop_pv);
+  svop_or_padop_pv inc_cleanup);
 use B::Bblock qw(find_leaders);
 use B::Stackobj qw(:types :flags);
 use B::C::Flags;
@@ -311,7 +323,7 @@ my ( $init_name, %debug, $strict );
 # underscores here because they are OK in (strict) barewords.
 # Disable with -fno-
 my ( $freetmps_each_bblock, $freetmps_each_loop, $inline_ops, $omit_taint,
-     $slow_signals, $name_magic, $type_attr );
+     $slow_signals, $name_magic, $type_attr, %c_optimise );
 $inline_ops = 1 unless $^O eq 'MSWin32'; # Win32 cannot link to unexported pp_op() XXX
 $name_magic = 1;
 my %optimise = (
@@ -868,26 +880,27 @@ sub error {
 
 # run-time eval is too late for attrs being checked by perlcore. BEGIN does not help.
 # use types is the right approach. But until types is fixed we use this hack.
+# Note that we also need a new CHECK_SCALAR_ATTRIBUTES hook, starting with v5.18.
 sub init_type_attrs {
-  if ($type_attr) {
-    eval q[
-  our $valid_attr = '^(int|double|string|unsigned|register|temporary|ro|readonly)$';
+  eval q[
+
+  our $valid_attr = '^(int|double|string|unsigned|register|temporary|ro|readonly|const)$';
   sub MODIFY_SCALAR_ATTRIBUTES {
     my $pkg = shift;
     my $v = shift;
-    my @bad;
-    my $attr = $valid_attr;
+    my $attr = $B::CC::valid_attr;
     $attr =~ s/\b$pkg\b//;
-    if (@bad = grep !/$attr/, @_) { return @bad; }
-    else {
-      no strict 'refs'; push @{"$pkg\::$v\::attributes"}, @_; # create a magic glob
+    if (my @bad = grep !/$attr/, @_) {
+      return @bad;
+    } else {
+      no strict 'refs';
+      push @{"$pkg\::$v\::attributes"}, @_; # create a magic glob
       return ();
     }
   }
   sub FETCH_SCALAR_ATTRIBUTES {
+    my ($pkg, $v) = @_;
     no strict 'refs';
-    my $pkg = shift;
-    my $v = shift;
     return @{"$pkg\::$v\::attributes"};
   }
 
@@ -895,15 +908,17 @@ sub init_type_attrs {
   sub main::MODIFY_SCALAR_ATTRIBUTES { B::CC::MODIFY_SCALAR_ATTRIBUTES(@_)}
   sub main::FETCH_SCALAR_ATTRIBUTES { B::CC::FETCH_SCALAR_ATTRIBUTES(@_) };
 
-  package int;    # my int $i : register : ro;
-  sub MODIFY_SCALAR_ATTRIBUTES { B::CC::MODIFY_SCALAR_ATTRIBUTES(@_)}
-  sub FETCH_SCALAR_ATTRIBUTES { B::CC::FETCH_SCALAR_ATTRIBUTES(@_) };
+  # my int $i : register : ro;
+  sub int::MODIFY_SCALAR_ATTRIBUTES { B::CC::MODIFY_SCALAR_ATTRIBUTES(@_)}
+  sub int::FETCH_SCALAR_ATTRIBUTES { B::CC::FETCH_SCALAR_ATTRIBUTES(@_) };
 
-  package double; # my double $d : ro;
-  sub MODIFY_SCALAR_ATTRIBUTES { B::CC::MODIFY_SCALAR_ATTRIBUTES(@_)}
-  sub FETCH_SCALAR_ATTRIBUTES { B::CC::FETCH_SCALAR_ATTRIBUTES(@_) };
-    ];
-  }
+  # my double $d : ro;
+  sub double::MODIFY_SCALAR_ATTRIBUTES { B::CC::MODIFY_SCALAR_ATTRIBUTES(@_)}
+  sub double::FETCH_SCALAR_ATTRIBUTES { B::CC::FETCH_SCALAR_ATTRIBUTES(@_) };
+
+  sub string::MODIFY_SCALAR_ATTRIBUTES { B::CC::MODIFY_SCALAR_ATTRIBUTES(@_)}
+  sub string::FETCH_SCALAR_ATTRIBUTES { B::CC::FETCH_SCALAR_ATTRIBUTES(@_) };
+  ];
 }
 
 =head2 load_pad
@@ -949,7 +964,7 @@ sub load_pad {
       # my int $i; my double $d; compiled code only, unless the source provides the int and double packages.
       # With Ctypes it is easier. my c_int $i; defines an external Ctypes int, which can be efficiently
       # compiled in Perl also.
-      # Better use attributes, like my $i:int; my $d:double; which works un-compiled also.
+      # XXX Better use attributes, like my $i:int; my $d:double; which works un-compiled also.
       if (ref($namesv) eq 'B::PVMG' and ref($namesv->SvSTASH) eq 'B::HV') { # my int
         $class = $namesv->SvSTASH->NAME;
         if ($class eq 'int') {
@@ -972,10 +987,13 @@ sub load_pad {
       }
 
       # Valid scalar type attributes:
-      #   int double ro readonly unsigned
+      #   int double string ro readonly const unsigned
       # Note: PVMG from above also.
-      # Typed arrays and hashes later. We need to add string also.
-      if (class($namesv) =~ /^(I|P|S|N)V/ and UNIVERSAL::can($class, "MODIFY_SCALAR_ATTRIBUTES")) {
+      # Typed arrays and hashes later.
+      if (0 and $class =~ /^(I|P|S|N)V/
+	  and $type_attr
+	  and UNIVERSAL::can($class,"CHECK_SCALAR_ATTRIBUTES")) # with 5.18
+      {
         require attributes;
         #my $svtype = uc reftype ($namesv);
         # test 105
@@ -2874,6 +2892,8 @@ sub cc_main {
     #local $B::C::pv_copy_on_grow = 1 if $B::C::ro_inc;
     warn "save context:\n" if $verbose;
     $init->add("/* save context */");
+    $init->add('/* %INC */');
+    inc_cleanup();
     $inc_hv          = svref_2object( \%INC )->save;
     $inc_av          = svref_2object( \@INC )->save;
   }
@@ -2954,6 +2974,10 @@ sub import {
   # Allow debugging in CHECK blocks without Od
   $DB::single=1 if defined &DB::DB;
   my ( $option, $opt, $arg );
+  # init with -O0
+  foreach my $ref ( values %optimise ) {
+    $$ref = 0;
+  }
 OPTION:
   while ( $option = shift @options ) {
     if ( $option =~ /^-(.)(.*)/ ) {
@@ -2978,7 +3002,12 @@ OPTION:
     }
     elsif ( $opt eq "u" ) {
       $arg ||= shift @options;
-      mark_unused( $arg, undef );
+      eval "require $arg;";
+      mark_unused( $arg, 1 );
+    }
+    elsif ( $opt eq "U" ) {
+      $arg ||= shift @options;
+      mark_skip( $arg );
     }
     elsif ( $opt eq "strict" ) {
       $arg ||= shift @options;
@@ -2997,6 +3026,7 @@ OPTION:
         my $ref = $B::C::option_map{$arg};
         if ( defined($ref) ) {
           $$ref = $value;
+	  $c_optimise{$ref}++;
         }
         else {
           warn qq(ignoring unknown optimisation option "$arg"\n);
@@ -3005,16 +3035,15 @@ OPTION:
     }
     elsif ( $opt eq "O" ) {
       $arg = 1 if $arg eq "";
-      my $ref;
-      foreach $ref ( values %optimise ) {
+      foreach my $ref ( values %optimise ) {
         $$ref = 0;
       }
       if ($arg >= 2) {
         $freetmps_each_loop = 1;
-        $type_attr = 1;
         $B::C::destruct = 0 unless $] < 5.008; # fast_destruct
       }
       if ( $arg >= 1 ) {
+        $type_attr = 1;
         $freetmps_each_bblock = 1 unless $freetmps_each_loop;
       }
     }
@@ -3094,22 +3123,28 @@ OPTION:
   #  warn "no_stack: ",join(" ",sort keys %no_stack),"\n";
   #}
 
+  mark_skip('B::C', 'B::C::Flags', 'B::CC', 'B::Asmdata', 'B::FAKEOP',
+	    'B::Section', 'B::Pseudoreg', 'B::Shadow', 'O', 'Opcodes',
+	    'B::Stackobj', 'B::Bblock');
+  #mark_skip('DB', 'Term::ReadLine') if $DB::deep;
+
   # Set some B::C optimizations.
   # optimize_ppaddr is not needed with B::CC as CC does it even better.
   for (qw(optimize_warn_sv save_data_fh av_init save_sig destruct),
        $PERL510 ? () : "pv_copy_on_grow")
   {
     no strict 'refs';
-    ${"B::C::$_"} = 1;
+    ${"B::C::$_"} = 1 unless $c_optimise{$_};
   }
+  $B::C::stash = 0 unless $c_optimise{stash};
   if (!$B::C::Flags::have_independent_comalloc) {
-    $B::C::av_init = 1;
-    $B::C::av_init2 = 0;
+    $B::C::av_init = 1 unless $c_optimise{av_init};
+    $B::C::av_init2 = 0 unless $c_optimise{av_init2};
   } else {
-    $B::C::av_init = 0;
-    $B::C::av_init2 = 1;
+    $B::C::av_init = 0 unless $c_optimise{av_init};
+    $B::C::av_init2 = 1 unless $c_optimise{av_init2};
   }
-  init_type_attrs if $type_attr; # but too late for -MB::CC=-O2 on import. attrs are checked before
+  init_type_attrs() if $type_attr; # but too late for -MB::CC=-O2 on import. attrs are checked before
   @options;
 }
 

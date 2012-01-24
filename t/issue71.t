@@ -30,7 +30,7 @@ EOF
 
 use B::C;
 ctestok(1, "C", "ccode71i", $script,
-	$B::C::VERSION < 1.35 ? "SvANY(REGEXP)=SvANY(CALLREGCOMP)" : undef
+	($B::C::VERSION < 1.35 ? "TODO " : ""). "SvANY(REGEXP)=SvANY(CALLREGCOMP)"
        );
 
 $script = <<'EOF';
@@ -44,16 +44,17 @@ EOF
 # rx: (?^i:^(?:US-?)ascii$)"
 use B::C;
 ctestok(2, "C", "ccode71i", $script,
-	$B::C::VERSION < 1.35 
-        ? "B:C reg_temp_copy from invalid r->offs" 
-        : "Encode::decode fails to leave_scope with const PAD PV 'Encode'");
+	$B::C::VERSION < 1.35
+        ? "TODO B:C reg_temp_copy from invalid r->offs"
+        : ($]>5.008004 and $]<5.008009?'':"TODO ")
+          ."alias reg_temp_copy failed: Unknown encoding 'UTF-8'");
 
+my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
 SKIP: {
-  skip "issue 78 hangs at Perl_hfree_next_entry >= 5.15", 1 if $] >= 5.015;
-
+skip "hangs", 1 if !$DEBUGGING;
 use B::CC;
 ctestok(3, "CC", "ccode71i", $script,
-      $B::CC::VERSION < 1.12
-      ? "B:CC Encode::decode fails to leave_scope with const PAD PV 'Encode'"
+      $B::CC::VERSION < 1.13
+      ? "TODO Encode::decode croak: Assertion failed: (SvTYPE(TARG) == SVt_PVHV), function Perl_pp_padhv"
       : undef);
 }

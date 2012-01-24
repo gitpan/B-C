@@ -4,27 +4,29 @@ Our Bytecode compiler disabled for 5.6, we keep the old. The old core compiler
 fails 50% but in mine is a blocker.
 Bytecode is only stable for >=5.8, non-debugging, threaded.
 
-C is stable, minor bugs left, v_strings in restricted hashes, loose QR Regexp, ...
+C is used in production, but a bit unstable, minor bugs left
+and obvious improvements are not always improvements.
 
-CC is unstable and slow, work in progress.
+CC is very unstable and slow, work in progress.
 
 C and CC: Same ok and less failures as with 5.6, 5.8 and 5.9.4.
 In 5.8.8 and 5.8.9 we have much less errors in the testsuite for the
 new CPAN compiler and the CORE compiler. See below.
 
-Most B::C and B::CC bugs fixed. 5.10 + 5.12 + 5.14 + 5.15 compatibility added.
+Most B::C and B::CC bugs fixed. 5.10 + 5.12 + 5.14 + 5.16 compatibility added.
 
 Open Problems for B::C:
-  test 46 (easy: add aux :: GVs)
-  test 50 (issue 64 - limitation: no ISA of empty packages)
+  shared_hek cleanup esp. since 5.15,
+  %INC mess, seen with run-time require,
+  see google issues
 
 See below at the detailed 5.6, 5.8, 5.10, 5.12, 5.14 status
 
 TEST STATUS
 -----------
-Tested on cygwin1.7, centos5, debian4, debian5 64bit, freebsd7, freebsd8, 
-solaris10 intel sunpro, openbsd38
-Not so regurarily on centos4, strawberry-5.10.1, strawberry-5.12.2, activeperl-5.10.1
+Tested on cygwin1.7, centos4, centos5.6, centos6, 
+debian5, freebsd7, solaris10 intel sunpro, openbsd49
+Not so regurarily on strawberry-5.10.1, strawberry-5.12.2, activeperl-5.10.1
 
 List of failed tests.
 
@@ -65,59 +67,39 @@ t/testc.sh -q -c; t/testcc.sh -q -c or make test TEST_VERBOSE=1
 
 5.6.2:
 t/bytecode      broken/not used
-t/c             15,41-43,46,50
+t/c             15,41-43,50
 t/c_o1,2       +44,45
 t/cc            15,21,30,35,41-46,50,103-105
 
-5.8.0
-redhat perl http://www.nntp.perl.org/group/perl.cpan.testers/2009/12/msg6576363.html:
-byterun.c:678: duplicate case value
-byterun.c:669: previously used here
-
-5.8.3 + 5.8.5 threaded 1.09
-cpantesters http://www.nntp.perl.org/group/perl.cpan.testers/2009/12/msg6576377.html
-http://www.nntp.perl.org/group/perl.cpan.testers/2009/12/msg6576274.html
-c 	 	7
-c_o1-2:  	7,11
-cc: 	 	3,7,29
-cc_o1-2: 	3,7 
-
-freebsd 5.10.1  c+cc fails on 28 generally, cc passed 12 
-freebsd 5.8.9:  c_o1-2: 11 (fixed with 1.09?)
-
-AP 5.8 MSVC6:
-t/cc*   12 (similar to 5.10 nt?) (skipped)
-t/o     5,9 (skipped)
-
-5.8.9: (5.8.8, 5.8.9 + 5.8.8-nt)
+5.8.[45]:
 t/bytecode      -
-t/c             41-43,46
-t/c_o1,2       +11
-t/cc           +11,21,30,50,103,105
+t/c             -
+t/cc            3,7,15,21,27,29,30,44-46,50,103,105
+
+5.8.9:
+t/bytecode      -
+t/c             -
+t/cc            21,30,46,50,103,105
 
 5.10.1:
-t/bytecode 	27
-t/c 		41-43,46
-t/c_o1,2          -"-
-t/cc 		14,21,30,35,41-43,46,50,103,105
+t/bytecode 	27,42,43
+t/c 		-
+t/cc 		14,15,21,30,46,50,103,105
 
-5.12.3:
-t/bytecode 	21,32
-t/c 		21,41-43,46
-t/c_o1,2          -"- 
-t/cc 		14,21,30,41-43,46,50,103,105
+5.12.4:
+t/bytecode 	32,46
+t/c 		21
+t/cc 		14,15,21,30,46,50,103,105
 
 5.14.2:
-t/bytecode 	27
-t/c 		41-43,46
-t/c_o1,2          -"-
-t/cc 		14,15,21,29,30,41-43,46,50,103,105
+t/bytecode 	27,46
+t/c 		-
+t/cc 		14,15,21,30,46,50,103,105
 
-5.15.3:
-t/bytecode 	27
-t/c 		15,41-43,46
-t/c_o1,2          -"-
-t/cc 		14,15,21,30,41-43,46,50,103,105
+5.15.7:
+t/bytecode 	27,46
+t/c 		-
+t/cc 		14,15,21,30,46,50,103,105
 
 
 CPAN Modules
@@ -127,29 +109,27 @@ We only try B::C so far.
 The full module testsuite is run with t/testm.sh -t [OPTS] Module
 
 Compile-time status from top100:
-generally: fail 1%
-5.6.2      fail 2%   ExtUtils::Install Template::Stash
-5.8.8      fail 6%   Pod::Simple Pod::Text File::Temp Moose CGI Test::Pod
-5.8.8-thr  fail 2%   ExtUtils::CBuilder MooseX::Types
-5.8.9      fail 3%   ExtUtils::CBuilder Moose MooseX::Types
-5.10.1     fail 1%   ExtUtils::CBuilder
-5.12.3     fail 1%   ExtUtils::CBuilder
-5.14.2     fail 1%   ExtUtils::CBuilder
-5.15.3     fail 3%   File::Temp ExtUtils::CBuilder Path::Class
+generally: pass 100%
+5.6.2      pass 100%
+5.8.9      fail 1%   Test::NoWarnings
+5.10.1     pass 100%
+5.12.4     pass 100%
+5.14.2     pass 100%
+5.15.7     fail 4% (unshare_hek) Moose MooseX::Types DateTime DateTime::TimeZone
 
 Run-time tests not yet fully done
 
-5.15 status
+5.16 status
 -----------
-new XSLoader:load_file not fully stable yet 
-  (runtime load of Carp leads to issue78)
+new XSLoader:load_file
+hang at hfree_next_entry issue78 (runtime load of Carp), esp. problematic non-debugging
+unshare_hek issues in dynamic scope
 
 5.10, 5.12, 5.14 status
 -----------------------
 TODO for B::C
-  new __DATA__ fixes not fully stable
   tests 21,41-43: B destruction,46,50
-  Encode static const destruction in PAD issue 71
+  Encode qr-copy issue 71
   restricted hashes in 5.10.0
   r-magic (e.g. Template::Stash 5.10.0 only)
   check t/testcore and testm.sh -t
@@ -162,6 +142,26 @@ Fix CC
 
 DONE
 ----
+fixed with 1.37:
+  fixed wrong test 46, test for Exporter STASH in *main:: STASH
+  copy-on-grow with LEN=0 and FAKE clash with share_hek
+  share_hek re-implemented
+  init of READONLY hash keys
+  re-hash everything at startup (oCERT-2011-003)
+  find UNIVERSAL methods, load SelectSaver with IO
+  hv_clear_placeholders
+  %+, %-, %!
+  %SIG
+  magic->PTR when SV (>5.6)
+  attributes::reftype
+  inc_cleanup (partially)
+  CV prototypes (>5.10)
+  ignore aelemfast SPECIAL pads (5.8.[45])
+  strip version object overload from XS packages (i91)
+  restore stdio handles from BEGIN blocks (Test::NoWarnings)
+  B::COP::stashflags (>5.15.4)
+  lost PL_regex_pad, (5.15 threaded)
+
 fixed with 1.36:
   5.15 XSLoader and hash init
   support lexical warnings
