@@ -61,6 +61,7 @@ WriteMakefile(
     'AUTHOR'   => 'Malcolm Beattie (retired), '
 	      .   'Reini Urban <perl-compiler@googlegroups.com>',
     'ABSTRACT' => 'Perl compiler',
+    'LICENSE'  => 'perl',
     (($ExtUtils::MakeMaker::VERSION gt '6.31' and $ExtUtils::MakeMaker::VERSION lt '6.46') ?
        ('EXTRA_META'  => "recommends:\n" .
         "    B::Flags:  0.04\n".
@@ -91,7 +92,7 @@ WriteMakefile(
                "bytecode[0-9]* ".
                "lib/B/Asmdata.pm script/perlcc ccode* cccode* Ccode* ".
  	       "*.core *.stackdump a.out a.exe *.cee *.c *.asm *.dbg *.plc *.obj ".
-               "*.concise *~ dll.base dll.exp mod.pl pcc* *.bak *.a rename POSIX"
+               "*.concise *~ dll.base dll.exp mod.pl pcc* *.bak *.a"
              },
 );
 
@@ -115,7 +116,7 @@ sub try_compile {
     my $libs = shift;
     # For consistency (without considering LD_PRELOAD) require perl to
     # be compiled with the same malloc library.
-    return 0 unless $Config{libs} =~ /\b\Q$lib\E\b/;
+    return 0 unless $Config{libs} =~ /\b\Q$libs\E\b/;
     unless (open PROG, ">", "test.c") {
         print ("Can't write test.c\n");
         return 0;
