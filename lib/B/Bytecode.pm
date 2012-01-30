@@ -569,11 +569,14 @@ sub B::IO::bsave {
   # issue93: restore std handles
   if (!$PERL56) {
     my $o = $io->object_2svref();
-    my $fd = ref($o) eq 'IO::Handle' ? 99 : $o->fileno();
-    bwarn( "io $ix perlio($fd) ".ref($o) ) if $fd == 99;
+    eval "require ".ref($o).";";
+    my $fd = $o->fileno();
+    # use IO::Handle ();
+    # my $fd = IO::Handle::fileno($o);
+    bwarn( "io ix=$ix perlio no fileno for ".ref($o) ) if $fd < 0;
     my $i = 0;
     foreach (qw(stdin stdout stderr)) {
-      if ($io->IsSTD($_) or $fd == -$i) { # negative stdout: closed or not yet init
+      if ($io->IsSTD($_) or $fd == -$i) { # negative stdout = error
 	nice1 "-perlio_$_($fd)-";
 	# bwarn( "io $ix perlio_$_($fd)" );
 	asm "xio_flags",  $io->IoFLAGS;
@@ -1202,6 +1205,7 @@ use ByteLoader '$ByteLoader::VERSION';
       my $thatfile = $1;
       *B::COP::file = sub { $thatfile };
     }
+    # Use -m instead for modules
     elsif (/^-u(.*)/ and $PERL56) {
       my $arg ||= $1;
       push @packages, $arg;

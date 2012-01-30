@@ -255,7 +255,7 @@ sub _fresh_perl {
     $runperl_args->{progfile} = $tmpfile;
     $runperl_args->{stderr} = 1;
 
-    open TEST, ">$tmpfile" or die "Cannot open $tmpfile: $!";
+    open TEST, ">", $tmpfile or die "Cannot open $tmpfile: $!";
 
     # VMS adjustments
     if( $^O eq 'VMS' ) {
@@ -419,22 +419,23 @@ sub run_cc_test {
     require B::C::Flags;
     my $test = $fnbackend."code".$cnt.".pl";
     my $cfile = $fnbackend."code".$cnt.$opt.".c";
-    my @obj = ($fnbackend."code".$cnt.$opt.".obj",
+    my @obj;
+    @obj = ($fnbackend."code".$cnt.$opt.".obj",
                $fnbackend."code".$cnt.$opt.".ilk",
                $fnbackend."code".$cnt.$opt.".pdb")
       if $Config{cc} =~ /^cl/i; # MSVC uses a lot of intermediate files
     my $exe = $fnbackend."code".$cnt.$opt.$Config{exe_ext};
     unlink ($test, $cfile, $exe, @obj);
-    open T, ">$test"; print T $script; close T;
+    open T, ">", $test; print T $script; close T;
     my $Mblib = $] >= 5.009005 ? "-Mblib" : ""; # test also the CORE B in older perls
     unless ($Mblib) {           # check for -Mblib from the testsuite
         if (grep { m{blib(/|\\)arch$} } @INC) {
             $Mblib = "-Iblib/arch -Iblib/lib";  # forced -Mblib via cmdline without
             					# printing to stderr
-            $backend = "-qq,$backend,-q" if (!$ENV{TEST_VERBOSE} and $] > 5.007);
+            $backend = "-qq,$backend,-q" if !$ENV{TEST_VERBOSE} and $] > 5.007;
         }
     } else {
-        $backend = "-qq,$backend,-q" if (!$ENV{TEST_VERBOSE} and $] > 5.007);
+        $backend = "-qq,$backend,-q" if !$ENV{TEST_VERBOSE} and $] > 5.007;
     }
     $backend .= ",-fno-warnings" if $] >= 5.013005;
     $backend .= ",-fno-fold" if $] >= 5.013009;
@@ -643,8 +644,11 @@ sub plctest {
     close F;
 
     my $runperl = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
-    my $b = $] > 5.008 ? "-qq,Bytecode" : "Bytecode";
+    # we don't want to change STDOUT/STDERR on STDOUT/STDERR tests, so no -qq
+    my $nostdoutclobber = $base !~ /^ccode93i/;
+    my $b = ($] > 5.008 and $nostdoutclobber) ? "-qq,Bytecode" : "Bytecode";
     system "$runperl -Iblib/arch -Iblib/lib -MO=$b,-o$name.plc $base.pl";
+    # $out =~ s/^$base.pl syntax OK\n//m;
     unless (-e "$name.plc") {
         print "not ok $num #B::Bytecode failed\n";
         exit;
@@ -681,7 +685,9 @@ sub ctest {
     close F;
 
     my $runperl = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
-    my $b = $] > 5.008 ? "-qq,$backend" : "$backend";
+    # we don't want to change STDOUT/STDERR on STDOUT/STDERR tests, so no -qq
+    my $nostdoutclobber = $base !~ /^ccode93i/;
+    my $b = ($] > 5.008 and $nostdoutclobber) ? "-qq,$backend" : "$backend";
     $b .= q(,-fno-fold,-fno-warnings) if $] >= 5.013005;
     system "$runperl -Iblib/arch -Iblib/lib -MO=$b,-o$name.c $name.pl";
     unless (-e "$name.c") {
@@ -785,20 +791,16 @@ sub todo_tests_default {
     my $ITHREADS  = ($Config{useithreads});
 
     my @todo  = ();
-    # split->pushre->pmreplroot as int. bug in B walker
-    # push @todo, (7)   if $] > 5.008 and $] < 5.008008; # and $ITHREADS;
     push @todo, (15)  if $] < 5.007;
     if ($what =~ /^c(|_o[1-4])$/) {
-        push @todo, (50)    if $] >= 5.010 and $] < 5.012 and $what =~ /c_o[4]/;
+        push @todo, (7)     if $] == 5.008005;
         push @todo, (21)    if $] >= 5.012 and $] < 5.014;
         push @todo, (15)    if $] > 5.010 and $ITHREADS;
+        push @todo, (27)    if $] >= 5.012 and $] < 5.014 and $ITHREADS and $DEBUGGING;
 
 	# @ISA issue 64
         push @todo, (10,12,19,25,42,43,50)  if $what eq 'c_o4';
-        #push @todo, (48)    if $what eq 'c_o4' and $] < 5.010;
-        # push @todo, (50) if $] > 5.013  and $what eq 'c' and !$ITHREADS;
-	# issue 78 error at DynaLoader (require Carp + invalid version)
-        #push @todo, (29,44,45) if $] > 5.015 and $what =~ /c_o[34]/;
+        push @todo, (48)  if $] >= 5.008009 and $] < 5.010 and $what eq 'c_o4';
 	# DynaLoader::dl_load_file()
         push @todo, (15,27,29,41..45,49) if $] > 5.015 and $what eq 'c_o4';
     } elsif ($what =~ /^cc/) {
@@ -806,35 +808,27 @@ sub todo_tests_default {
 	# on cygwin 29 passes
 	#15,21,27,30,41-45,50,103,105
 	push @todo, (21,30,46,50,103,105);
-	push @todo, (3,7,15,41,44,45) if $] > 5.008 and $] <= 5.008005;
-	push @todo, (15)    if $] < 5.008008 or $] >= 5.010;
-	push @todo, (14)    if $] >= 5.012;
-
-	#push @todo, (44)    if $ITHREADS or $] < 5.012;
-        #push @todo, (44)   if !$ITHREADS and $] >= 5.012;
+	push @todo, (15)    if $] < 5.008008;
 	push @todo, (104,105) if $] < 5.007; # leaveloop, no cxstack
+	push @todo, (3,7,15,41,44,45) if $] > 5.008 and $] <= 5.008005;
+        push @todo, (42,43) if $] > 5.008 and $] <= 5.008005 and !$ITHREADS;
+
+	push @todo, (14)    if $] >= 5.012;
 	push @todo, (10,16) if $what eq 'cc_o2';
 	#push @todo, (103)   if $] > 5.007 and $] < 5.009 and $what eq 'cc_o1';
 	# only tested 5.8.4 and .5
 	push @todo, (29)    if $] < 5.008006 or ($] > 5.013 and $] < 5.015);
-	#push @todo, (11,27) if $] < 5.009;
 	push @todo, (14)    if $] >= 5.010 and $^O !~ /MSWin32|cygwin/i;
 	# solaris also. I suspected nvx<=>cop_seq_*
 	push @todo, (12)    if $^O eq 'MSWin32' and $Config{cc} =~ /^cl/i;
-	#push @todo, (3,4,27,42,43) if $] >= 5.011004 and $ITHREADS;
 	push @todo, (26)    if $what =~ /^cc_o[12]/;
+	push @todo, (27)    if $] > 5.008008 and $] < 5.009 and $what eq 'cc_o2';
 	push @todo, (27)    if $] <= 5.008008;
 	push @todo, (25)    if $] >= 5.011004 and $DEBUGGING and $ITHREADS;
 	push @todo, (3,4)   if $] >= 5.011004 and $ITHREADS;
-	#push @todo, (103)   if $] >= 5.012 and $ITHREADS;
-	#push @todo, (49)    if $] >= 5.013009 and $] < 5.015 and !$ITHREADS; # fixed with r1142
-	push @todo, (49)    if $] >= 5.013009 and !$ITHREADS; #not
+	push @todo, (49)    if $] >= 5.013009 and !$ITHREADS;
     }
-    #push @todo, (12)   if $] >= 5.015007 and $ITHREADS;
     push @todo, (48)   if $] > 5.007 and $] < 5.009 and $^O =~ /MSWin32|cygwin/i;
-    #push @todo, (25)   if $] eq "5.010001" and !$DEBUGGING and $ITHREADS;
-    #push @todo, (25)   if $] >= 5.010 and $] < 5.012 and !$ITHREADS;
-    #push @todo, (32)  if $] >= 5.011003;
     return @todo;
 }
 

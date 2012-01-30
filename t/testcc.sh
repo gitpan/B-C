@@ -32,12 +32,12 @@ v513="`$PERL -e'print (($] < 5.013005) ? q() : q(-fno-fold,-fno-warnings,))'`"
 # OCMD=${OCMD}${v513}
 if [ -z $Mblib ]; then 
     VERS="${VERS}_global"; 
-    OCMD="$PERL $Mblib -MO=C,${v513}-DcAC,"
+    OCMD="$PERL $Mblib -MO=C,${v513}-Dcsp,"
     if [ $BASE = "testcc.sh" ]; then # DrOsplt 
         OCMD="$PERL $Mblib -MO=CC,${v513}-DOsplt,"
     fi
 else
-    OCMD="$PERL $Mblib -MO=C,${v513}-DsCp,-v,"
+    OCMD="$PERL $Mblib -MO=C,${v513}-Dsp,-v,"
     if [ $BASE = "testcc.sh" ]; then # DoOscprSql
         OCMD="$PERL $Mblib -MO=CC,${v513}-DOscpSql,-v,"
     fi
@@ -86,10 +86,11 @@ function runopt {
     if [ -z "$QUIET" ]; then echo "./${o}${suff}"
     else echo -n "./${o}${suff} "
     fi
-    mem=$(ulimit -m)
-    ulimit -S -m 50000
+    mem=$(ulimit -m 2>/dev/null)
+    err=$?
+    test -z $err && ulimit -S -m 50000
     res=$(./${o}${suff}) || fail "./${o}${suff}" "errcode $?"
-    ulimit -S -m $mem
+    test -z $err && ulimit -S -m $mem
     if [ "X$res" = "X${result[$n]}" ]; then
 	test "X$res" = "X${result[$n]}" && pass "./${o}${suff}" "=> '$res'"
         if [ -z $KEEP ]; then rm ${o}${suff}_E.c ${o}${suff}.c ${o}${suff} 2>/dev/null; fi
@@ -389,6 +390,12 @@ print q(o) if $s eq q(string test);
 q(test string) =~ /(?<first>\w+) (?<second>\w+)/;
 print q(k) if $+{first} eq q(test);'
 result[90]='ok'
+tests[901]='my %errs = %!; # t/op/magic.t Errno compiled in
+print q(ok) if defined ${"!"}{ENOENT};'
+result[901]='ok'
+tests[902]='my %errs = %{"!"}; # t/op/magic.t Errno to be loaded at run-time
+print q(ok) if defined ${"!"}{ENOENT};'
+result[902]='ok'
 # IO handles
 tests[91]='# issue59
 use strict;
