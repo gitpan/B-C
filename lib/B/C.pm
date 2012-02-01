@@ -12,7 +12,7 @@
 package B::C;
 use strict;
 
-our $VERSION = '1.41';
+our $VERSION = '1.42';
 my %debug;
 my $eval_pvs = '';
 
@@ -264,7 +264,7 @@ my (%strtable, %hektable, @static_free);
 my %xsub;
 my $warn_undefined_syms;
 my ($staticxs, $outfile);
-my (%include_package, %skip_package, %saved);
+my (%include_package, %skip_package, %saved, %isa_cache);
 my %static_ext;
 my ($use_xsloader);
 my $nullop_count         = 0;
@@ -770,18 +770,21 @@ sub B::OP::_save_common {
   # entersub -> pushmark -> package -> args...
   # See perl -MO=Terse -e '$foo->bar("var")'
   # See also http://www.perl.com/pub/2000/06/dougpatch.html
-  # XXX TODO 5.8
+  # XXX TODO 5.8 ex-gvsv
+  # XXX TODO Check for method_named as last argument
   if ($op->type > 0 and
       $op->name eq 'entersub' and $op->first and $op->first->can('name') and
       $op->first->name eq 'pushmark' and
       # Foo->bar()  compile-time lookup, 34 = BARE in all versions
       (($op->first->next->name eq 'const' and $op->first->next->flags == 34)
-       or $op->first->next->name eq 'padsv'      # $foo->bar() run-time lookup
-       or ($op->first->next->name eq 'gvsv' and !$op->first->next->type  # 5.8 ex-gvsv
+       or $op->first->next->name eq 'padsv'      # or $foo->bar() run-time lookup
+       or ($] < 5.010 and $op->first->next->name eq 'gvsv' and !$op->first->next->type  # 5.8 ex-gvsv
 	   and $op->first->next->next->name eq 'const' and $op->first->next->next->flags == 34))
      ) {
     my $pkgop = $op->first->next;
-    $pkgop = $op->first->next->next unless $op->first->next->type; # 5.8 ex-gvsv
+    if ($] < 5.010 and !$op->first->next->type) { # 5.8 ex-gvsv
+      $pkgop = $op->first->next->next;
+    }
     warn "check package_pv ".$pkgop->name." for method_name\n" if $debug{cv};
     my $pv = svop_or_padop_pv($pkgop); # 5.13: need to store away the pkg pv
     if ($pv and $pv !~ /[! \(]/) {
@@ -1067,7 +1070,7 @@ sub B::PVOP::save {
 # we improve the method search heuristics by maintaining this mru list.
 sub push_package ($) {
   my $p = shift or return;
-  warn "save package_pv \"$package_pv\" for method_name\n"
+  warn "save package_pv \"$package_pv\" for method_name from @{[(caller(1))[3]]}\n"
     if $debug{cv} or $debug{pkg} and !grep { $p eq $_ } @package_pv;
   @package_pv = grep { $p ne $_ } @package_pv if @package_pv; # remove duplicates at the end
   unshift @package_pv, $p; 		       # prepend at the front
@@ -1091,10 +1094,17 @@ sub method_named {
     no strict 'refs';
     $method = $_ . '::' . $name;
     if (defined(&$method)) {
+      warn sprintf( "Found &%s::%s\n", $_, $name ) if $debug{cv};
       $include_package{$_} = 1; # issue59
       mark_package($_, 1);
       last;
     } else {
+      if (my $parent = try_isa($_,$name)) {
+	warn sprintf( "Found &%s::%s\n", $parent, $name ) if $debug{cv};
+	$method = $parent . '::' . $name;
+	$include_package{$parent} = 1;
+	last;
+      }
       warn "no definition for method_name \"$method\"\n" if $debug{cv};
     }
   }
@@ -2332,23 +2342,35 @@ sub B::RV::save {
 # XXX issue 64, empty @ISA if a package has no subs. in Bytecode ok
 sub try_isa {
   my ( $cvstashname, $cvname ) = @_;
+  if (my $found = $isa_cache{"$cvstashname\::$cvname"}) {
+    return $found;
+  }
   no strict 'refs';
-  # XXX theoretically a valid shortcut. In reality it fails...
+  # XXX theoretically a valid shortcut. In reality it fails when $cvstashname is not loaded.
   # return 0 unless $cvstashname->can($cvname);
   my @isa = $PERL510 ? @{mro::get_linear_isa($cvstashname)} : @{ $cvstashname . '::ISA' };
   warn sprintf( "No definition for sub %s::%s. Try \@%s::ISA=(%s)\n",
 		$cvstashname, $cvname, $cvstashname, join(",",@isa))
     if $debug{cv};
+  my %already;
   for (@isa) { # global @ISA or in pad
     next if $_ eq $cvstashname;
+    next if $already{$_};
     warn sprintf( "Try &%s::%s\n", $_, $cvname ) if $debug{cv};
     if (defined(&{$_ .'::'. $cvname})) {
+      svref_2object( \@{$cvstashname . '::ISA'} )->save("$cvstashname\::ISA");
+      $isa_cache{"$cvstashname\::$cvname"} = $_;
       mark_package($_, 1); # force
-      return 1;
+      return $_;
     } else {
+      $already{$_}++; # avoid recursive cycles
       my @i = $PERL510 ? @{mro::get_linear_isa($_)} : @{ $_ . '::ISA' };
       if (@i) {
-	try_isa($_, $cvname) and return 1;
+	my $parent = try_isa($_, $cvname);
+	if ($parent) {
+	  svref_2object( \@{$_ . '::ISA'} )->save("$_\::ISA");
+	  return $parent;
+	}
       }
     }
   }
@@ -2358,7 +2380,7 @@ sub try_isa {
 # If the sub or method is not found:
 # 1. try @ISA, mark_package and return.
 # 2. try UNIVERSAL::method
-# 2. try compile-time expansion of AUTOLOAD to get the goto &sub addresses
+# 3. try compile-time expansion of AUTOLOAD to get the goto &sub addresses
 sub try_autoload {
   my ( $cvstashname, $cvname ) = @_;
   no strict 'refs';
@@ -2667,7 +2689,7 @@ sub B::CV::save {
 	}
       }
       if ( $$root || $cvxsub ) {
-        warn "Successful forced autoload\n" if $verbose;
+        warn "Successful forced autoload\n" if $verbose and $debug{cv};
       }
     }
   }
@@ -2681,7 +2703,7 @@ sub B::CV::save {
   if ($$root) {
     warn sprintf( "saving op tree for CV 0x%x, root=0x%x\n",
                   $$cv, $$root )
-      if $debug{cv};
+      if $debug{cv} and $debug{gv};
     my $ppname = "";
     if ($$gv) {
       my $stashname = $gv->STASH->NAME;
@@ -2712,12 +2734,12 @@ sub B::CV::save {
       # XXX readonly comppad names and symbols invalid
       #local $B::C::pv_copy_on_grow = 1 if $B::C::ro_inc;
       warn sprintf( "saving PADLIST 0x%x for CV 0x%x\n", $$padlist, $$cv )
-        if $debug{cv};
+        if $debug{cv} and $debug{gv};
       # XXX avlen 2
       $padlistsym = $padlist->save($fullname.' :pad');
       warn sprintf( "done saving PADLIST %s 0x%x for CV 0x%x\n",
 		    $padlistsym, $$padlist, $$cv )
-        if $debug{cv};
+        if $debug{cv} and $debug{gv};
       # do not record a forward for the pad only
       $init->add( "CvPADLIST($sym) = $padlistsym;" );
     }
@@ -2748,6 +2770,7 @@ sub B::CV::save {
 
   $pv = '' unless defined $pv;    # Avoid use of undef warnings
   my ( $pvsym, $cur, $len ) = ('NULL',0,0);
+  my $CvFLAGS = $cv->CvFLAGS;
   if ($PERL510) {
     ( $pvsym, $cur ) = save_hek($pv);
     # XXX issue 84: we need to check the cv->PV ptr not the value.
@@ -2758,6 +2781,9 @@ sub B::CV::save {
     # TODO:
     # my $ourstash = "0";  # TODO stash name to bless it (test 16: "main::")
     if ($PERL514) {
+      # cv_undef wants to free it when CvDYNFILE(cv) is true.
+      # E.g. DateTime: boot_POSIX. newXS reuses cv if autoloaded. So turn it off globally.
+      my $CvFLAGS = $cv->CvFLAGS & ~0x1000; # CVf_DYNFILE
       my $xpvc = sprintf
 	# stash magic cur len cvstash start root cvgv cvfile cvpadlist     outside outside_seq cvflags cvdepth
 	("Nullhv, {0}, %u, %u, %s, {%s}, {s\\_%x}, %s, %s, (PADLIST *)%s, (CV*)s\\_%x, %s, 0x%x, %d",
@@ -2768,7 +2794,7 @@ sub B::CV::save {
 	 $padlistsym,
 	 ${ $cv->OUTSIDE }, #if main_cv set later
 	 $cv->OUTSIDE_SEQ,
-	 ($$gv and $cv->CvFLAGS & 0x400) ? 0 : $cv->CvFLAGS, # otherwise we cannot set the GV
+	 ($$gv and $CvFLAGS & 0x400) ? 0 : $CvFLAGS, # no CVf_CVGV_RC otherwise we cannot set the GV
 	 $cv->DEPTH);
       if (!$new_cv_fw) {
 	$symsect->add("XPVCVIX$xpvcv_ix\t$xpvc");
@@ -2829,7 +2855,7 @@ sub B::CV::save {
       $init->add( sprintf( "GvXPVGV(s\\_%x)->xnv_u.xgv_stash = s\\_%x;",
 			   $$cv, $$gvstash ) );
       warn sprintf( "done saving GvSTASH 0x%x for CV 0x%x\n", $$gvstash, $$cv )
-	if $debug{cv};
+	if $debug{cv} and $debug{gv};
     }
     if ( $cv->OUTSIDE_SEQ ) {
       my $cop = $symtable{ sprintf( "s\\_%x", $cv->OUTSIDE_SEQ ) };
@@ -2877,7 +2903,7 @@ sub B::CV::save {
   }
   if ($$gv) {
     #test 16: Can't call method "FETCH" on unblessed reference. gdb > b S_method_common
-    warn sprintf( "Saving GV 0x%x for CV 0x%x\n", $$gv, $$cv ) if $debug{cv};
+    warn sprintf( "Saving GV 0x%x for CV 0x%x\n", $$gv, $$cv ) if $debug{cv} and $debug{gv};
     $gv->save;
     if ($PERL514) {
       # XXX gvcv might be PVMG
@@ -2885,11 +2911,11 @@ sub B::CV::save {
       # since 5.13.3 and CvGV_set there are checks that the CV is not RC (refcounted)
       # assertion "!CvCVGV_RC(cv)" failed: file "gv.c", line 219, function: Perl_cvgv_set
       # we init with CvFLAGS = 0 and set it later, as successfully done in the Bytecode compiler
-      if ($cv->CvFLAGS & 0x0400) { # CVf_CVGV_RC
+      if ($CvFLAGS & 0x0400) { # CVf_CVGV_RC
         warn sprintf( "CvCVGV_RC turned off. CV flags=0x%x %s CvFLAGS=0x%x \n",
-                      $cv->FLAGS, $debug{flags}?$cv->flagspv:"", $cv->CvFLAGS & ~0x400)
+                      $cv->FLAGS, $debug{flags}?$cv->flagspv:"", $CvFLAGS & ~0x400)
           if $debug{cv};
-        $init->add( sprintf( "CvFLAGS((CV*)%s) = %u;", $sym, $cv->CvFLAGS ) );
+        $init->add( sprintf( "CvFLAGS((CV*)%s) = %u;", $sym, $CvFLAGS ) );
       }
       # XXX TODO someone is overwriting CvSTART also
       $init->add("CvSTART($sym) = $startfield;");
@@ -2897,13 +2923,12 @@ sub B::CV::save {
       $init->add( sprintf( "CvGV(%s) = %s;", $sym, objsym($gv) ) );
     }
     warn sprintf("done saving GV 0x%x for CV 0x%x\n",
-    		  $$gv, $$cv) if $debug{cv};
+		 $$gv, $$cv) if $debug{cv} and $debug{gv};
   }
   unless ($optimize_cop) {
     if ($MULTI) {
       $init->add( savepvn( "CvFILE($sym)", $cv->FILE, $gv ) );
-    }
-    else {
+    } else {
       $init->add( sprintf( "CvFILE(%s) = %s;", $sym, cstring( $cv->FILE ) ) );
     }
   }
@@ -2914,7 +2939,7 @@ sub B::CV::save {
     # $sym fixed test 27
     $init->add( sprintf( "CvSTASH_set((CV*)$sym, s\\_%x);", $$stash ) );
     warn sprintf( "done saving STASH 0x%x for CV 0x%x\n", $$stash, $$cv )
-      if $debug{cv};
+      if $debug{cv} and $debug{gv};
   }
   my $magic = $cv->MAGIC;
   if ($magic and $$magic) {
@@ -3319,7 +3344,7 @@ sub B::AV::save {
   my $magic = $av->save_magic;
 
   if ( $debug{av} ) {
-    my $line = sprintf( "saving AV 0x%x [%s] FILL=$fill", $$av, class($av));
+    my $line = sprintf( "saving AV $fullname 0x%x [%s] FILL=$fill", $$av, class($av));
     $line .= sprintf( " AvFLAGS=0x%x", $av->AvFLAGS ) if $] < 5.009;
     warn "$line\n";
   }
@@ -3328,10 +3353,15 @@ sub B::AV::save {
   if ($fill > -1 and $magic !~ /D/) {
     my @array = $av->ARRAY; # crashes with D magic (Getopt::Long)
     if ( $debug{av} ) {
-      my $el;
       my $i = 0;
-      foreach $el (@array) {
-        warn sprintf( "AV 0x%x[%d] = %s 0x%x\n", $$av, $i++, class($el), $$el );
+      foreach my $el (@array) {
+	my $val = '';
+	# if SvIOK print iv, POK pv
+	if ($el->can('FLAGS')) {
+	  $val = $el->IVX if $el->FLAGS & SVf_IOK;
+	  $val = '"'.$el->PVX.'"' if $el->FLAGS & SVf_POK;
+	}
+        warn sprintf( "AV 0x%x[%d] = %s 0x%x $val\n", $$av, $i++, class($el), $$el );
       }
     }
 
@@ -4190,19 +4220,9 @@ sub output_main_rest {
 HEK *
 my_share_hek( pTHX_ const char *str, I32 len, register U32 hash ) {
     if (!hash) {
-      register HE* he;
-      /* XXX use hv_common_key_len if we start supporting UTF8 */
-      if (!(he = (HE *) hv_common(PL_strtab, NULL, str, len, 0, 0, NULL, 0))) {
-	/* Does not work with DEBUGGING as there is an artifical assert in hv.c
-	   which checks that a HE is allocated before the HEK. */
-        HvSHAREKEYS_on(PL_strtab); /* XXX This is a hack! */
-        he = (HE *) hv_common(PL_strtab, NULL, str, len, 0, HV_FETCH_ISSTORE, NULL, 0);
-        HvSHAREKEYS_off(PL_strtab);
-      }
-      return HeKEY_hek(he);
-    } else {
-      return Perl_share_hek(aTHX_ str, len, hash);
+      PERL_HASH(hash, str, len);
     }
+    return Perl_share_hek(aTHX_ str, len, hash);
 }
 
 _EOT5
@@ -4695,6 +4715,7 @@ EOT
 	exit( exitstatus );
     dl_init(aTHX);
 EOT
+
     print $B::C::eval_pvs if $B::C::eval_pvs;
     print "    exitstatus = perl_run( my_perl );\n";
 
@@ -5143,7 +5164,8 @@ sub inc_cleanup {
   }
   if ($debug{pkg} and $verbose) {
     warn "\%include_package: ".join(" ",grep{$include_package{$_}} sort keys %include_package)."\n";
-    warn "\%INC: ".join(" ",sort keys %INC)."\n";
+    my @inc = grep !/auto\/.+\.(al|ix)$/, sort keys %INC;
+    warn "\%INC: ".join(" ",@inc)."\n";
   }
 }
 

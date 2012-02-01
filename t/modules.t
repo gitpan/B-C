@@ -9,6 +9,7 @@
 #  -all     - run also B::CC and B::Bytecode
 #  -subset  - run only random 10 of all modules. default if ! -d .svn
 #  -no-subset  - all 100 modules
+#  -no-date - no date added at the logfile
 #  -t       - run also tests
 #  -log     - save log file. default on test10 and without subset
 #
@@ -39,12 +40,13 @@ BEGIN {
   my $X = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
   my $tmp = File::Temp->new(TEMPLATE => 'pccXXXXX');
   my $out = $tmp->filename;
-  my $result = `$X -Mblib blib/script/perlcc --staticxs -S -o$out -e"use Data::Dumper;"`;
+  my $result = `$X -Mblib blib/script/perlcc --staticxs -o$out -e"use Data::Dumper;"`;
   my $exe = $^O eq 'MSWin32' ? "$out.exe" : $out;
   unless (-e $exe or -e 'a.out') {
-    my $result = `$X -Mblib blib/script/perlcc -S -o$out -e"use Data::Dumper;"`;
+    my $result = `$X -Mblib blib/script/perlcc -o$out -e"use Data::Dumper;"`;
     unless (-e $out or -e 'a.out') {
       plan skip_all => "perlcc cannot link XS module Data::Dumper. Most likely wrong ldopts.";
+      unlk$out
       exit;
     } else {
       $staticxs = '';
@@ -269,11 +271,11 @@ sub is_todo {
   if ($] > 5.015 and $] < 5.015006) { foreach(qw(
    B::Hooks::EndOfScope
   )) { return '> 5.15' if $_ eq $module; }}
-  if ($] > 5.015) { foreach(qw(
-      Moose
-      MooseX::Types
-      DateTime
-  )) { return '> 5.15 (unshare_hek)' if $_ eq $module; }}
+  #if ($] > 5.015) { foreach(qw(
+  #    Moose
+  #    MooseX::Types
+  #    DateTime
+  #)) { return '> 5.15 (unshare_hek)' if $_ eq $module; }}
 
   # ---------------------------------------
   if ($Config{useithreads}) {
@@ -316,9 +318,9 @@ sub is_todo {
     if ($] > 5.008004 and $] <= 5.008005) { foreach(qw(
       DateTime
     )) { return '5.8.5 without threads' if $_ eq $module; }}
-    if ($] > 5.015) { foreach(qw(
-      DateTime::TimeZone
-    )) { return '> 5.15 without threads' if $_ eq $module; }}
+    #if ($] > 5.015) { foreach(qw(
+    #  DateTime::TimeZone
+    #)) { return '> 5.15 without threads' if $_ eq $module; }}
   }
   # ---------------------------------------
 }

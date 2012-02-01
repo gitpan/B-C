@@ -1,7 +1,7 @@
 # Stash.pm -- show what stashes are loaded
 package B::Stash;
 
-our $VERSION = '1.01';
+our $VERSION = '1.02';
 
 =pod
 
@@ -69,11 +69,11 @@ sub import {
       print "-umain,-u", join( ",-u", @arr ), "\n";
     } ];
   } else {
-    BEGIN { require B; }
     eval q[
      CHECK {
       ] . ($debug ? q[print "scanxs main\n"; my $debug=1;] : "") . q[
-      B->import(qw(svref_2object CVf_CONST CVf_ANON));
+      require XSLoader;
+      XSLoader::load('B::Stash'); # for xs only
       my @arr = scanxs( $main::{"main::"},'',$debug );
       @arr = map { s/\:\:$//; $_ eq "<none>" ? () : $_; } @arr;
       print "-x", join( ",-x", @arr ), "\n";
@@ -96,10 +96,10 @@ sub compile {
       print "-umain,-u", join( ",-u", @arr ), "\n";
     }
   } else {
-    BEGIN { require B; }
+    require XSLoader;
+    XSLoader::load('B::Stash'); # for xs only
     print "scanxs main\n" if $debug;
     return sub {
-      B->import(qw(svref_2object CVf_CONST CVf_ANON));
       my @arr = scanxs( $main::{"main::"},'',$debug );
       @arr = map { s/\:\:$//; $_ eq "<none>" ? () : $_; } @arr;
       print "-x", join( ",-x", @arr ), "\n";
@@ -186,11 +186,10 @@ sub has_xs {
   my $debug = shift;
   foreach my $key ( keys %{$name} ) {
     my $cvname = $name . $key;
-    my $cv = svref_2object( \&{$cvname} );
-    print "has_xs: &",$cvname," -> ",$cv," ",$cv->XSUB,"\n" if $debug and $cv;
-    if ( $cv and $cv->XSUB ) {
+    if (CvIsXSUB($cvname)) {
+      print "has_xs: &",$cvname," -> 1\n" if $debug;
       return 0 if in_static_core(substr($name,0,-2), $key);
-      return 1 if $] < 5.007 or !($cv->CvFLAGS & CVf_CONST) or ($cv->CvFLAGS & CVf_ANON);
+      return 1;
     }
   }
   return 0;
