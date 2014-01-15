@@ -1,9 +1,13 @@
 #!/bin/sh
 # test locally
-perlall -m --nogit maketest -v
+if `which perlall-maketest`; then
+  perlall-maketest
+else
+  perlall -m maketest -v
+fi
 
 # creates log.modules files with date added
-perlall -m --nogit make '-Mblib t/modules.t -no-subset -no-date t/top100'
+perlall -m make '-Iblib/arch -Iblib/lib t/modules.t -no-subset -no-date t/top100'
 # t/todomod.pl
 
 # test vm's

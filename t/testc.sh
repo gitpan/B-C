@@ -4,7 +4,7 @@
 # quiet c only: t/testc.sh -q -O0
 function help {
   echo "t/testc.sh [OPTIONS] [1-$ntests]"
-  echo " -D<debugflags>     for O=C or O=CC. Default: C,-DcOACMSGpu,-v resp. CC,-DoOscprSql,-v"
+  echo " -D<debugflags>     for O=C or O=CC. Default: C,-DspmF,-v resp. CC,-DOscpSql,-v"
   echo " -O<0-4>            optimization level"
   echo " -f<opt>            special optimization"
   echo " -B<static|dynamic> pass to cc_harness"
@@ -22,22 +22,23 @@ function help {
 # perl5.10.0d-nt, perl5.11.0, ...)
 PERL=`grep "^PERL =" Makefile|cut -c8-`
 PERL=${PERL:-perl}
+v518=`$PERL -e'print (($] < 5.018)?0:1)'`
 
 function init {
 BASE=`basename $0`
 # if $] < 5.9 you may want to remove -Mblib for testing the core lib. -o
 #Mblib="`$PERL -e'print (($] < 5.009005) ? q() : q(-Mblib))'`"
-Mblib=${Mblib:--Mblib} # B::C is now fully 5.6+5.8 backwards compatible
+Mblib=${Mblib:--Iblib/arch -Iblib/lib} # B::C is now fully 5.6+5.8 backwards compatible
 v513="`$PERL -e'print (($] < 5.013005) ? q() : q(-fno-fold,-fno-warnings,))'`"
 # OCMD=${OCMD}${v513}
-if [ -z $Mblib ]; then 
+if [ -z "$Mblib" ]; then
     VERS="${VERS}_global"; 
     OCMD="$PERL $Mblib -MO=C,${v513}-Dcsp,"
     if [ $BASE = "testcc.sh" ]; then # DrOsplt 
         OCMD="$PERL $Mblib -MO=CC,${v513}-DOsplt,"
     fi
 else
-    OCMD="$PERL $Mblib -MO=C,${v513}-Dsp,-v,"
+    OCMD="$PERL $Mblib -MO=C,${v513}-DspF,-v,"
     if [ $BASE = "testcc.sh" ]; then # DoOscprSql
         OCMD="$PERL $Mblib -MO=CC,${v513}-DOscpSql,-v,"
     fi
@@ -79,8 +80,13 @@ function runopt {
     if [ "$o" = "ccode46" -o "$o" = "cccode46" ]; then
 	CMD="$CMD-fstash,"
     fi
-    vcmd ${CMD}-o${o}${suff}.c $o.pl
+    if [ -z $qq ]; then
+	vcmd ${CMD}-o${o}${suff}.c $o.pl 2>&1 | grep -v "$o.pl syntax OK"
+    else
+	vcmd ${CMD}-o${o}${suff}.c $o.pl
+    fi
     test -z $CPP || vcmd $CCMD ${o}${suff}.c -c -E -o ${o}${suff}_E.c
+    test -n "$QUIET" || echo ${CMD}-o${o}${suff}.c $o.pl
     vcmd $CCMD ${o}${suff}.c $LCMD -o ${o}${suff}
     test -x ${o}${suff} || (test -z $CONT && exit)
     if [ -z "$QUIET" ]; then echo "./${o}${suff}"
@@ -127,6 +133,7 @@ function ctest {
 	vcmd ${OCMD}-o$o.c $o.pl
         test -s $o.c || (echo "empty $o.c"; test -z $CONT && exit 2)
 	test -z $CPP || vcmd $CCMD $o.c -c -E -o ${o}_E.c
+        test -n "$QUIET" || echo ${OCMD}-o$o.c $o.pl
 	vcmd $CCMD $o.c $LCMD -o $o
 	test -x $o || (test -z $CONT && exit)
 	if [ -z "$QUIET" ]; then echo "./$o"
@@ -154,72 +161,76 @@ function ctest {
     fi
 }
 
-ntests=50
+ntests=300
 declare -a tests[$ntests]
 declare -a result[$ntests]
 ncctests=23
 declare -a cctests[$((100+$ncctests))]
 declare -a ccresult[$((100+$ncctests))]
 tests[1]='print "hi"'
-result[1]='hi';
+result[1]='hi'
 tests[2]='for (1,2,3) { print if /\d/ }'
-result[2]='123';
+result[2]='123'
 tests[3]='$_ = "xyxyx"; %j=(1,2); s/x/$j{print("z")}/ge; print $_'
-result[3]='zzz2y2y2';
+result[3]='zzz2y2y2'
 tests[4]='$_ = "xyxyx"; %j=(1,2); s/x/$j{print("z")}/g; print $_'
-result[4]='z2y2y2';
+if [[ $v518 -gt 0 ]]; then
+  result[4]='zzz2y2y2'
+else
+  result[4]='z2y2y2'
+fi
 tests[5]='print split /a/,"bananarama"'
-result[5]='bnnrm';
+result[5]='bnnrm'
 tests[6]="{package P; sub x {print 'ya'} x}"
-result[6]='ya';
+result[6]='ya'
 tests[7]='@z = split /:/,"b:r:n:f:g"; print @z'
-result[7]='brnfg';
+result[7]='brnfg'
 tests[8]='sub AUTOLOAD { print 1 } &{"a"}()'
-result[8]='1';
+result[8]='1'
 tests[9]='my $l_i = 3; $x = sub { print $l_i }; &$x'
-result[9]='3';
+result[9]='3'
 tests[10]='my $i_i = 1; 
 my $foo = sub {
   $i_i = shift if @_
 }; print $i_i; 
 print &$foo(3),$i_i;'
-result[10]='133';
+result[10]='133'
 # index: do fbm_compile or not
 tests[11]='$x="Cannot use"; print index $x, "Can"'
-result[11]='0';
+result[11]='0'
 tests[12]='my $i_i=6; eval "print \$i_i\n"; print ""'
-result[12]='6';
+result[12]='6'
 tests[13]='BEGIN { %h=(1=>2,3=>4) } print $h{3}'
-result[13]='4';
+result[13]='4'
 tests[14]='open our $T,"a"; print "ok";'
-result[14]='ok';
+result[14]='ok'
 # __DATA__ handles still broken non-threaded 5.10
 tests[15]='print <DATA>
 __DATA__
 a
 b'
 result[15]='a
-b';
+b'
 tests[16]='BEGIN{tie @a, __PACKAGE__;sub TIEARRAY {bless{}} sub FETCH{1}}; print $a[1]'
-result[16]='1';
+result[16]='1'
 tests[17]='my $i_ir=3; print 1 .. $i_ir'
-result[17]='123';
+result[17]='123'
 # custom key sort
 tests[18]='my $h = { a=>3, b=>1 }; print sort {$h->{$a} <=> $h->{$b}} keys %$h'
-result[18]='ba';
+result[18]='ba'
 # fool the sort optimizer by my $p, pp_sort works ok on CC
 tests[19]='print sort { my $p; $b <=> $a } 1,4,3'
-result[19]='431';
+result[19]='431'
 # not repro: something like this is broken in original 5.6 (Net::DNS::ZoneFile::Fast)
 # see new test 33
 tests[20]='$a="abcd123";my $r=qr/\d/;print $a =~ $r;'
-result[20]='1';
+result[20]='1'
 # broken on early alpha and 5.10: run-time labels.
 tests[21]='sub skip_on_odd{next NUMBER if $_[0]% 2}NUMBER:for($i=0;$i<5;$i++){skip_on_odd($i);print $i;}'
-result[21]='024';
+result[21]='024'
 # broken in original perl 5.6
 tests[22]='my $fh; BEGIN { open($fh,"<","/dev/null"); } print "ok";';
-result[22]='ok';
+result[22]='ok'
 # broken in perl 5.8
 tests[23]='package MyMod; our $VERSION = 1.3; print "ok";'
 result[23]='ok'
@@ -230,10 +241,10 @@ result[24]='ok'
 # <=5.6 qsort needs two more passes here than >=5.8 merge_sort
 # 5.12 got it backwards and added 4 more passes.
 tests[25]='print sort { $i++; $b <=> $a } 1..4'
-result[25]="4321";
+result[25]="4321"
 # lvalue sub
 tests[26]='sub a:lvalue{my $a=26; ${\(bless \$a)}}sub b:lvalue{${\shift}}; print ${a(b)}';
-result[26]="26";
+result[26]="26"
 # xsub constants (constant folded). newlib: 0x200, glibc: 0x100
 tests[27]='use Fcntl ();my $a=Fcntl::O_CREAT(); print "ok" if ( $a >= 64 && &Fcntl::O_CREAT >= 64 );'
 result[27]='ok'
@@ -320,22 +331,27 @@ result[49]='ok'
 # @ISA issue 64
 tests[50]='package Top;sub top{q(ok)};package Next;our @ISA=qw(Top);package main;print Next->top();'
 result[50]='ok'
-# XXX TODO check if signals work, sigwarn and SIG{INT}
-tests[51]='BEGIN{$SIG{__WARN__}=sub{$w++;};}$a="abcdefxyz";eval{substr($a,999,999)="";};print q(ok) if $w'
+# XXX TODO sigwarn $w = B::NULL without -v
+tests[51]='$SIG{__WARN__}=sub{print "ok"};warn 1;'
 result[51]='ok'
+# check if general signals work
+tests[511]='BEGIN{$SIG{USR1}=sub{$w++;};} kill USR1 => $$; print q(ok) if $w';
+result[511]='ok'
 #-------------
 # issue27
-tests[70]='require LWP::UserAgent;print q(ok);'
-result[70]='ok'
+tests[527]='require LWP::UserAgent;print q(ok);'
+result[527]='ok'
 #issue 24
-tests[74]='dbmopen(%H,q(f),0644);print q(ok);'
-result[74]='ok'
-# object call: method_named with args.
-tests[72]='package dummy;sub meth{print "ok"};package main;my dummy $o = bless {},"dummy"; $o->meth("const")'
-result[72]='ok'
-# object call: dynamic method_named with args.
-tests[73]='package dummy;sub meth{print "ok"};package main;my $meth="meth";my $o = bless {},"dummy"; $o->$meth("const")'
-result[73]='ok'
+tests[224]='dbmopen(%H,q(f),0644);print q(ok);'
+result[224]='ok'
+tests[68]='package A;
+sub test {
+  use Data::Dumper ();
+  /^(.*?)\d+$/;
+  "Some::Package"->new();
+}
+print "ok"'
+result[68]='ok'
 # issue71
 tests[71]='
 package my;
@@ -354,9 +370,20 @@ package main;
 *f=*my::f;
 print "ok" if f(qr/^(.*)$/ => q("\L$1"));'
 result[71]="ok"
+# object call: method_named with args.
+tests[72]='package dummy;sub meth{print "ok"};package main;my dummy $o = bless {},"dummy"; $o->meth("const")'
+result[72]='ok'
+# object call: dynamic method_named with args.
+tests[73]='package dummy;sub meth{print "ok"};package main;my $meth="meth";my $o = bless {},"dummy"; $o->$meth("const")'
+result[73]='ok'
+tests[74]='package dummy;
+my $invoked_as_script = !caller();
+__PACKAGE__->script(@ARGV) if $invoked_as_script;
+sub script {my($package,@args)=@_;print "ok"}'
+result[74]='ok'
 # issue 71_2+3: cop_warnings issue76 and const destruction issue71 fixed
 # ok with "utf-8-strict"
-tests[75]='
+tests[75]='#TODO 5.8.8-5.10
 use Encode;
 my $x = "abc";
 print "ok" if "abc" eq Encode::decode("UTF-8", $x);'
@@ -396,6 +423,16 @@ result[901]='ok'
 tests[902]='my %errs = %{"!"}; # t/op/magic.t Errno to be loaded at run-time
 print q(ok) if defined ${"!"}{ENOENT};'
 result[902]='ok'
+# issue #199
+tests[903]='"abc" =~ /(.)./; print "ok" if "21" eq join"",@+;'
+result[903]='ok'
+# issue #220
+tests[904]='my $content = "ok\n";
+while ( $content =~ m{\w}g ) {
+    $_ .= "$-[0]$+[0]";
+}
+print "ok" if $_ eq "0112";'
+result[904]='ok'
 # IO handles
 tests[91]='# issue59
 use strict;
@@ -405,10 +442,9 @@ my $remote = IO::Socket::INET->new( Proto => "tcp", PeerAddr => "perl.org", Peer
 print $remote "GET / HTTP/1.0" . "\r\n\r\n";
 my $result = <$remote>;
 $result =~ m|HTTP/1.1 200 OK| ? print "ok" : print $result;
-close $remote;
-'
+close $remote;'
 result[91]='ok'
-tests[93]='
+tests[93]='#SKIP
 my ($pid, $out, $in);
 BEGIN {
   local(*FPID);
@@ -425,16 +461,19 @@ kill 0, $pid; 			     # BAD! warn? die?
 print "k" if "test" eq read $in, my $x, 4;
 unlink "pcc.tmp";
 '
-result[93]='ok'
+result[93]='o'
 tests[931]='my $f;BEGIN{open($f,"<README");}read $f,my $in, 2; print "ok"'
 result[931]='ok'
 tests[932]='my $f;BEGIN{open($f,">&STDOUT");}print $f "ok"'
 result[932]='ok'
-tests[95]='use IO::Socket::SSL();
-my IO::Socket::SSL $handle = new IO::Socket::SSL;
+tests[95]='#TODO IO::Handle
+use IO::Socket::SSL();
+my IO::Handle $handle = IO::Socket::SSL->new(SSL_verify_mode =>0);
 $handle->blocking(0);
 print "ok";'
 result[95]='ok'
+tests[97]='use v5.12; print q(ok);'
+result[97]='ok'
 
 # from here on we test CC specifics only
 
@@ -452,9 +491,13 @@ tests[104]='@a=(1..4);while($a=shift@a){print $a;}continue{$a=~/2/ and reset q(a
 result[104]='12'
 # CC -ftype-attr
 #tests[105]='$int::dummy=0;$double::dummy=0;my int $r;my $i:int=2;our double $d=3.0; $r=$i*$i; $r*=$d; print $r;'
-tests[105]='$int::dummy=0;$double::dummy=0;my int $r;my $i_i=2;our double $d=3.0; $r=$i*$i; $r*=$d; print $r;'
+tests[105]='%int::;%double::;my int $r;my int $i=2;our double $d=3.0; $r=$i*$i; $r*=$d; print $r;'
 result[105]='12'
 
+# issue31
+tests[131]='package Ccode31i;my $regex = qr/\w+/;sub test {print ("word" =~ m/^$regex$/o ? "ok\n" : "not ok\n");}
+package main; &Ccode31i::test();'
+result[131]='ok'
 # issue35
 tests[110]='sub new{}sub test{{my $x=1;my $y=$x+1;}my $x=2;if($x!=3){4;}}'
 result[110]=''
@@ -497,6 +540,542 @@ result[122]='http'
 # issue52
 tests[123]='my $x;my $y = 1;$x and $y == 2;print $y == 1 ? "ok\n" : "fail\n";'
 result[123]='ok'
+# issue125 DynaLoader::bootstrap_inherit [perl #119577]
+tests[125]='use Net::LibIDN; print q(ok);'
+result[125]='ok'
+# saving recursive functions sometimes recurses in the compiler. this not, but Moose stucks in Pod::Simple
+tests[99]='package my;sub recurse{my $i=shift;recurse(++$i)unless $i>5000;print"ok";exit};package main;my::recurse(1)'
+result[99]='ok'
+if [[ $v518 -gt 0 ]]; then
+  tests[130]='no warnings "experimental::lexical_subs";use feature "lexical_subs";my sub p{q(ok)}; my $a=\&p;print p;'
+  result[130]='ok'
+fi
+tests[138]='print map { chr $_ } qw/97 98 99/;'
+result[138]='abc'
+tests[140]='my %a;print "ok" if !%a;'
+result[140]='ok'
+#tests[141]='print "ok" if "1" > 0'
+tests[141]='@x=(0..1);print "ok" if $#x == "1"'
+result[141]='ok'
+tests[142]='$_ = "abc\x{1234}";chop;print "ok" if $_ eq "abc"'
+result[142]='ok'
+tests[143]='BEGIN {
+  package Net::IDN::Encode;
+  our $DOT = qr/[\.]/; #works with my!
+  my $RE  = qr/xx/;
+  sub domain_to_ascii {
+    my $x = shift || "";
+    $x =~ m/$RE/o;
+    return split( qr/($DOT)/o, $x);
+  }
+}
+package main;
+Net::IDN::Encode::domain_to_ascii(42);
+print "ok\n";'
+result[143]='ok'
+tests[1431]='BEGIN{package Foo;our $DOT=qr/[.]/;};package main;print "ok\n" if "dot.dot" =~ m/($Foo::DOT)/'
+result[1431]='ok'
+tests[1432]='BEGIN{$DOT=qr/[.]/}print "ok\n" if "dot.dot" =~ m/($DOT)/'
+result[1432]='ok'
+tests[144]='print index("long message\0xx","\0")'
+result[144]='12'
+tests[145]='my $bits = 0; for (my $i = ~0; $i; $i >>= 1) { ++$bits; }; print $bits'
+result[145]=`$PERL -MConfig -e'print 8*$Config{ivsize}'`
+tests[146]='my $a = v120.300; my $b = v200.400; $a ^= $b; print sprintf("%vd", $a);'
+result[146]='176.188'
+tests[148]='open(FH, ">", "ccode148i.tmp"); print FH "1\n"; close FH; print -s "ccode148i.tmp"'
+result[148]='2'
+tests[150]='print NONEXISTENT "foo"; print "ok" if $! == 9'
+result[150]='ok'
+tests[1501]='$! = 0; print NONEXISTENT "foo"; print "ok" if $! == 9'
+result[1501]='ok'
+tests[152]='#TODO
+print "ok" if find PerlIO::Layer "perlio"'
+result[152]='ok'
+tests[154]='$SIG{__WARN__} = sub { die "warning: $_[0]" }; opendir(DIR, ".");closedir(DIR);print q(ok)'
+result[154]='ok'
+tests[156]='use warnings;
+no warnings qw(portable);
+use XSLoader;
+XSLoader::load() if $ENV{force_xsloader}; # trick for perlcc to force xloader to be compiled
+{
+    my $q = 12345678901;
+    my $x = sprintf("%llx", $q);
+    print "ok\n" if hex $x == 0x2dfdc1c35;
+    exit;
+}'
+result[156]='ok'
+tests[157]='$q = 18446744073709551615;print scalar($q)."\n";print scalar(18446744073709551615)."\n";'
+result[157]='18446744073709551615
+18446744073709551615'
+tests[1571]='my $a = 9223372036854775807; print "ok\n" if ++$a == 9223372036854775808;'
+result[1571]='ok'
+# duplicate of 148
+tests[158]='open W, ">ccodetmp" or die "1: $!";print W "foo";close W;open R, "ccodetmp" or die "2: $!";my $e=eof R ? 1 : 0;close R;print "$e\n";'
+result[158]='0'
+tests[159]='@X::ISA = "Y"; sub Y::z {"Y::z"} print "ok\n" if  X->z eq "Y::z"; delete $X::{z}; exit'
+result[159]='ok'
+# see 188
+tests[160]='sub foo { (shift =~ m?foo?) ? 1 : 0 }
+print "ok\n";'
+result[160]='ok'
+tests[161]='sub PVBM () { foo } { my $dummy = index foo, PVBM } print PVBM'
+result[161]='foo'
+# duplicate of 142
+tests[162]='$x = "\x{1234}"; print "ok\n" if ord($x) == 0x1234;'
+result[162]='ok'
+tests[163]='# WontFix
+my $destroyed = 0;
+sub  X::DESTROY { $destroyed = 1 }
+{
+	my $x;
+	BEGIN {$x = sub { }  }
+	$x = bless {}, 'X';
+}
+print qq{ok\n} if $destroyed == 1;'
+result[163]='ok'
+# duplicate of 148
+tests[164]='open(DUPOUT,">&STDOUT");close(STDOUT);open(F,">&DUPOUT");print F "ok\n";'
+result[164]='ok'
+tests[165]='use warnings;
+sub recurse1 {
+    unshift @_, "x";
+    no warnings "recursion";
+    goto &recurse2;
+}
+sub recurse2 {
+    my $x = shift;
+    $_[0] ? +1 + recurse1($_[0] - 1) : 0
+}
+print "ok\n" if recurse1(500) == 500;'
+result[165]='ok'
+tests[166]='my $ok = 1;
+foreach my $chr (60, 200, 600, 6000, 60000) {
+  my ($key, $value) = (chr ($chr) . "\x{ABCD}", "$chr\x{ABCD}");
+  chop($key, $value);
+  my %utf8c = ( $key => $value );
+  my $tempval = sprintf q($utf8c{"\x{%x}"}), $chr;
+  my $ev = eval $tempval;
+  $ok = 0 if !$ev or $ev ne $value;
+} print "ok" if $ok'
+result[166]='ok'
+tests[167]='$a = "a\xFF\x{100}";
+eval {$b = crypt($a, "cd")};
+print $@;'
+result[167]='Wide character in crypt at ccode167.pl line 2.'
+tests[168]='my $start_time = time;
+eval {
+    local $SIG{ALRM} = sub { die "ALARM !\n" };
+    alarm 1;
+    # perlfunc recommends against using sleep in combination with alarm.
+    1 while (time - $start_time < 3);
+};
+alarm 0;
+print $@;
+print "ok\n" if $@ eq "ALARM !\n";'
+result[168]='ALARM !
+ok'
+tests[169]='# TODO
+package MyTest;
+use Attribute::Handlers;
+sub Check :ATTR {
+    print "called\n";
+    print "ok\n" if ref $_[4] eq "ARRAY" && join(",", @{$_[4]}) eq join(",", qw/a b c/);
+}
+sub a_sub :Check(qw/a b c/) {
+    return 42;
+}
+print a_sub()."\n";'
+result[169]='called
+ok
+42'
+# works fine with -O3
+tests[170]='# TODO
+eval "sub xyz (\$) : bad ;"; print "~~~~\n$@~~~~\n"'
+result[170]='~~~~
+Invalid CODE attribute: bad at (eval 1) line 1.
+BEGIN failed--compilation aborted at (eval 1) line 1.
+~~~~'
+tests[172]='package Foo;
+use overload q("") => sub { "Foo" };
+package main;
+my $foo = bless {}, "Foo";
+print "ok " if "$foo" eq "Foo";
+print "$foo\n";'
+result[172]='ok Foo'
+tests[173]='# WontFix
+use constant BEGIN   => 42; print "ok 1\n" if BEGIN == 42;
+use constant INIT   => 42; print "ok 2\n" if INIT == 42;
+use constant CHECK   => 42; print "ok 3\n" if CHECK == 42;'
+result[173]='Prototype mismatch: sub main::BEGIN () vs none at ./ccode173.pl line 2.
+Constant subroutine BEGIN redefined at ./ccode173.pl line 2.
+ok 1
+ok 2
+ok 3'
+tests[174]='#TODO bytes-heavy
+my $str = "\x{10000}\x{800}";
+no warnings "utf8";
+{ use bytes; $str =~ s/\C\C\z//; }
+my $ref = "\x{10000}\0";
+print "ok 1\n" if ~~$str eq $ref;
+$str = "\x{10000}\x{800}";
+{ use bytes; $str =~ s/\C\C\z/\0\0\0/; }
+my $ref = "\x{10000}\0\0\0\0";
+print "ok 2\n" if ~~$str eq $ref;'
+result[174]='ok 1
+ok 2'
+tests[175]='#TODO
+{
+  # note that moving the use in an eval block solve the problem
+  use warnings NONFATAL => all;
+  $SIG{__WARN__} = sub { "ok - expected warning\n" };
+  my $x = pack( "I,A", 4, "X" );
+  print "ok\n";
+}'
+result[175]='ok - expected warning
+ok'
+tests[176]='#TODO
+use Math::BigInt; print Math::BigInt::->new(5000000000);'
+result[176]='5000000000'
+tests[177]='use version; print "ok\n" if version::is_strict("4.2");'
+result[177]='ok'
+tests[178]='BEGIN { $hash  = { pi => 3.14, e => 2.72, i => -1 } ;} print scalar keys $hash;'
+result[178]='3'
+tests[179]='#TODO smartmatch subrefs
+{
+    package Foo;
+    sub new { bless {} }
+}
+package main;
+our $foo = Foo->new;
+our $bar = $foor; # required to generate the wrong behavior
+my $match = eval q($foo ~~ undef) ? 1 : 0;
+print "match ? $match\n";'
+result[179]='match ? 0'
+tests[180]='#TODO
+use feature "switch"; use integer; given(3.14159265) { when(3) { print "ok\n"; } }'
+result[180]='ok'
+tests[181]='sub End::DESTROY { $_[0]->() };
+my $inx = "OOOO";
+$SIG{__WARN__} = sub { print$_[0] . "\n" };
+{
+    $@ = "XXXX";
+    my $e = bless( sub { die $inx }, "End")
+}'
+result[181]=''
+tests[182]='#TODO stash-magic delete renames to ANON
+my @c; sub foo { @c = caller(0); print $c[3] } my $fooref = delete $::{foo}; $fooref -> ();'
+result[182]='main::__ANON__'
+tests[183]='main->import()'
+result[183]=''
+tests[184]='use warnings;
+sub xyz { no warnings "redefine"; *xyz = sub { $a <=> $b }; &xyz }
+eval { @b = sort xyz 4,1,3,2 };
+print defined $b[0] && $b[0] == 1 && $b[1] == 2 && $b[2] == 3 && $b[3] == 4 ? "ok\n" : "fail\n";
+exit;
+{
+    package Foo;
+    use overload (qw("" foo));
+}
+{
+    package Bar;
+    no warnings "once";
+    sub foo { $ENV{fake} }
+}
+'
+result[184]='ok'
+# usage: t/testc.sh -O3 -Dp,-UCarp 185
+tests[185]='#TODO bytes-heavy
+my $a=pack("U",0xFF);use bytes;print "not " unless $a eq "\xc3\xbf" && bytes::length($a) == 2; print "ok\n";'
+result[185]='ok'
+tests[186]='eval q/require B/; my $sub = do { package one; \&{"one"}; }; delete $one::{one}; my $x = "boom"; print "ok\n";'
+result[186]='ok'
+# duplicate of 182
+tests[187]='my $glob = \*Phoo::glob; undef %Phoo::; print ( ( "$$glob" eq "*__ANON__::glob" ) ? "ok\n" : "fail with $$glob\n" );'
+result[187]='ok'
+tests[188]='package aiieee;sub zlopp {(shift =~ m?zlopp?) ? 1 : 0;} sub reset_zlopp {reset;}
+package main; print aiieee::zlopp(""), aiieee::zlopp("zlopp"), aiieee::zlopp(""), aiieee::zlopp("zlopp");
+aiieee::reset_zlopp(); print aiieee::zlopp("zlopp")'
+result[188]='01001'
+#tests[189]=''
+#result[189]=''
+#tests[190]=''
+#result[190]=''
+tests[191]='# WontFix
+BEGIN{sub plan{42}} {package Foo::Bar;} print((exists $Foo::{"Bar::"} && $Foo::{"Bar::"} eq "*Foo::Bar::") ? "ok\n":"bad\n"); plan(fake=>0);'
+result[191]='ok'
+tests[192]='use warnings;
+{
+ no warnings qw "once void";
+ my %h; # We pass a key of this hash to the subroutine to get a PVLV.
+ sub { for(shift) {
+  # Set up our glob-as-PVLV
+  $_ = *hon;
+  # Assigning undef to the glob should not overwrite it...
+  {
+   my $w;
+   local $SIG{__WARN__} = sub { $w = shift };
+   *$_ = undef;
+   print ( $w =~ m/Undefined value assigned to typeglob/ ? "ok" : "not ok");
+  }
+ }}->($h{k});
+}'
+result[192]='ok'
+tests[193]='unlink q{not.a.file}; $! = 0; open($FOO, q{not.a.file}); print( $! ne 0 ? "ok" : q{error: $! should not be 0}."\n"); close $FOO;'
+result[193]='ok'
+tests[194]='$0 = q{good morning, Dave}; #print "pid: $$\n";
+$s=`ps auxw | grep "$$" | grep ", Dave"|grep -v grep`;
+print q(ok) if $s =~ /good morning, Dave/'
+result[194]='ok'
+# duplicate of 152
+tests[195]='use PerlIO;  eval { require PerlIO::scalar }; find PerlIO::Layer "scalar"'
+result[195]=''
+tests[196]='package Foo;
+sub new { bless {}, shift }
+DESTROY { $_[0] = "foo" }
+package main;
+eval q{\\($x, $y, $z) = (1, 2, 3);};
+my $m;
+$SIG{__DIE__} = sub { $m = shift };
+{ my $f = Foo->new }
+print "m: $m\n";'
+result[196]='m: Modification of a read-only value attempted at ccode196.pl line 3.'
+tests[197]='# TODO
+package FINALE;
+{
+    $ref3 = bless ["ok - package destruction"];
+    my $ref2 = bless ["ok - lexical destruction\n"];
+    local $ref1 = bless ["ok - dynamic destruction\n"];
+    1;
+}
+DESTROY {
+    print $_[0][0];
+}'
+result[197]='ok - dynamic destruction
+ok - lexical destruction
+ok - package destruction'
+# duplicate of 150
+tests[198]='{
+  open(my $NIL, qq{|/bin/echo 23}) or die "fork failed: $!";
+  $! = 1;
+  close $NIL;
+  if($! == 5) { print}
+}'
+result[198]='23'
+# duplicate of 90
+tests[199]='"abc" =~ /(.)./; print @+; print "end\n"'
+result[199]='21end'
+tests[200]='%u=("\x{123}"=>"fo"); print "ok" if $u{"\x{123}"} eq "fo"'
+result[200]='ok'
+tests[2001]='BEGIN{%u=("\x{123}"=>"fo");} print "ok" if $u{"\x{123}"} eq "fo";'
+result[2001]='ok'
+tests[201]='use Storable;*Storable::CAN_FLOCK=sub{1};print qq{ok\n}'
+result[201]='ok'
+tests[2011]='sub can {require Config; import Config;return $Config{d_flock}}
+use IO::File;
+can();
+print "ok\n";'
+result[2011]='ok'
+tests[203]='use open(IN => ":crlf", OUT => ":encoding(cp1252)");
+open F, "<", "/dev/null";
+my %l = map {$_=>1} PerlIO::get_layers(F, input  => 1);
+print $l{crlf} ? q(ok) : keys(%l);'
+result[203]='ok'
+tests[207]='use warnings;
+sub asub { }
+asub(tests => 48);
+my $str = q{0};
+$str =~ /^[ET1]/i;
+{
+    no warnings qw<io deprecated>;
+    print "ok 1\n" if opendir(H, "t");
+    print "ok 2" if open(H, "<", "TESTS");
+}'
+result[207]='ok 1
+ok 2'
+tests[208]='#TODO 197
+sub MyKooh::DESTROY { print "${^GLOBAL_PHASE} MyKooh " }  my $k=bless {}, MyKooh;
+sub OurKooh::DESTROY { print "${^GLOBAL_PHASE} OurKooh" }our $k=bless {}, OurKooh;'
+if [[ `$PERL -e'print (($] < 5.014)?0:1)'` -gt 0 ]]; then
+  result[208]='RUN MyKooh DESTRUCT OurKooh'
+else
+  result[208]=' MyKooh  OurKooh'
+fi
+tests[212]='$blurfl = 123;
+{
+    package abc;
+    $blurfl = 5;
+}
+$abc = join(":", sort(keys %abc::));
+package abc;
+print "variable: $blurfl\n";
+print "eval: ". eval q/"$blurfl\n"/;
+package main;
+sub ok { 1 }'
+result[212]='variable: 5
+eval: 5'
+tests[214]='
+my $expected = "foo";
+sub check(_) { print( (shift eq $expected) ? "ok\n" : "not ok\n" ) }
+$_ = $expected;
+check;
+undef $expected;
+&check; # $_ not passed'
+result[214]='ok
+ok'
+tests[215]='eval { $@ = "t1\n"; do { die "t3\n" }; 1; }; print ":$@:\n";'
+result[215]=':t3
+:'
+tests[216]='eval { $::{q{@}}=42; }; print qq{ok\n}'
+result[216]='ok'
+# also at 904
+tests[220]='#TODO
+my $content = "ok\n";
+while ( $content =~ m{\w}g ) {
+    $_ .= "$-[0]$+[0]";
+}
+print "ok" if $_ eq "0112";'
+result[220]='ok'
+tests[223]='use strict; eval q({ $x = sub }); print $@'
+result[223]='Illegal declaration of anonymous subroutine at (eval 1) line 1.'
+tests[224]='use bytes; my $p = "\xB6"; my $u = "\x{100}"; my $pu = "\xB6\x{100}"; print ( $p.$u eq $pu ? "ko\n" : "ok\n" );'
+result[224]='ok'
+tests[225]='$_ = $dx = "\x{10f2}"; s/($dx)/$dx$1/; $ok = 1 if $_ eq "$dx$dx"; $_ = $dx = "\x{10f2}"; print qq{end\n};'
+result[225]='end'
+tests[226]='# WontFix
+@INC = (); dbmopen(%H, $file, 0666)'
+result[226]='No dbm on this machine at -e line 1.'
+tests[227]='open IN, "/dev/null" or die $!; *ARGV = *IN; foreach my $x (<>) { print $x; } close IN; print qq{ok\n}'
+result[227]='ok'
+tests[229]='sub yyy () { "yyy" } print "ok\n" if( eval q{yyy} eq "yyy");'
+result[229]='ok'
+#issue 30
+tests[230]='sub f1 { my($self) = @_; $self->f2;} sub f2 {} sub new {} print "@ARGV\n";'
+result[230]=''
+tests[232]='use Carp (); exit unless Carp::longmess(); print qq{ok\n}'
+result[232]='ok'
+tests[234]='$c = 0; for ("-3" .. "0") { $c++ } ; print "$c"'
+result[234]='4'
+# t/testc.sh -O3 -Dp,-UCarp,-v 235
+tests[235]='BEGIN{$INC{"Carp.pm"}="/dev/null"} $d = pack("U*", 0xe3, 0x81, 0xAF); { use bytes; $ol = bytes::length($d) } print $ol'
+result[235]='6'
+# -O3
+tests[236]='sub t { if ($_[0] == $_[1]) { print "ok\n"; } else { print "not ok - $_[0] == $_[1]\n"; } } t(-1.2, " -1.2");'
+result[236]='ok'
+tests[237]='print "\000\000\000\000_"'
+result[237]='_'
+tests[238]='#TODO
+sub f ($);
+sub f ($) {
+  my $test = $_[0];
+  write;
+  format STDOUT =
+ok @<<<<<<<
+$test
+.
+}
+f("");
+'
+result[238]='ok'
+tests[239]='#TODO
+my $x="1";
+format STDOUT =
+ok @<<<<<<<
+$x
+.
+write;print "\n";'
+result[239]='ok 1'
+tests[240]='my $a = "\x{100}\x{101}Aa";
+print "ok\n" if "\U$a" eq "\x{100}\x{100}AA";
+my $b = "\U\x{149}cD"; # no pb without that line'
+result[240]='ok'
+tests[241]='#TODO
+package Pickup; use UNIVERSAL qw( can ); if (can( "Pickup", "can" ) != \&UNIVERSAL::can) { print "not " } print "ok\n";'
+result[241]='ok'
+tests[242]='$xyz = ucfirst("\x{3C2}");
+$a = "\x{3c3}foo.bar";
+($c = $a) =~ s/(\p{IsWord}+)/ucfirst($1)/ge;
+print "ok\n" if $c eq "\x{3a3}foo.Bar";'
+result[242]='ok'
+tests[243]='use warnings "deprecated"; print hex(${^WARNINGS}) . " "; print hex(${^H})'
+result[243]='0 598'
+tests[244]='print "($_)\n" for q{-2}..undef;'
+result[244]='(-2)
+(-1)
+(0)'
+# fails -O3 only
+tests[245]='#TODO -O3
+sub foo {
+    my ( $a, $b ) = @_;
+    print "a: ".ord($a)." ; b: ".ord($b)." [ from foo ]\n";
+}
+print "a: ". ord(lc("\x{1E9E}"))." ; ";
+print "b: ". ord("\x{df}")."\n";
+foo(lc("\x{1E9E}"), "\x{df}");'
+result[245]='a: 223 ; b: 223
+a: 223 ; b: 223 [ from foo ]'
+# see t/issue235.t test 2
+tests[246]='sub foo($\@); eval q/foo "s"/; print $@'
+result[246]='Not enough arguments for main::foo at (eval 1) line 2, at EOF'
+tests[247]='# WontFix
+no warnings; $[ = 1; $big = "N\xabN\xab"; print qq{ok\n} if rindex($big, "N", 3) == 3'
+result[247]='ok'
+tests[248]='# TODO
+{my $s="toto";my $_="titi";{$s =~ /to(?{ print "-$_-$s-\n";})to/;}}'
+result[248]='-titi-toto-'
+tests[249]='# TODO
+use version; print version::is_strict(q{01}) ? 1 : 0'
+result[249]='0'
+tests[250]='# TODO
+use warnings qw/syntax/; use version; $withversion::VERSION = undef; eval q/package withversion 1.1_;/; print $@;'
+result[250]='Misplaced _ in number at (eval 1) line 1.
+Invalid version format (no underscores) at (eval 1) line 1, near "package withversion "
+syntax error at (eval 1) line 1, near "package withversion 1.1_"'
+tests[251]='# TODO
+sub f;print "ok" if exists &f'
+result[251]='ok'
+# duplicate of 234
+tests[252]='my $i = 0; for ("-3".."0") { ++$i } print $i'
+result[252]='4'
+tests[253]='# TODO
+INIT { require "t/test.pl"}plan(tests=>2);is("\x{2665}", v9829);is(v9829,"\x{2665}");'
+result[253]='1..2
+ok 1
+ok 2
+'
+tests[254]='# TODO 197 destroy lexvar
+my $flag = 0;
+sub  X::DESTROY { $flag = 1 }
+{my $x; # x only exists in that scope
+ BEGIN {$x = 42 } # initialize variable during compilation
+ { $x = bless {}, "X" }
+ # undef($x); # value should be free when exiting scope
+}
+print "ok\n" if $flag;'
+result[254]='ok'
+# duplicate of 185, bytes-heavy
+tests[255]='#TODO
+$a = chr(300);
+my $l = length($a);
+my $lb;
+{ use bytes; $lb = length($a); }
+print( ( $l == 1 && $lb == 2 ) ? "ok\n" : "l -> $l ; lb -> $lb\n" );'
+result[255]='ok'
+tests[256]='# TODO
+BEGIN{ $| = 1; } print "ok\n" if $| == 1'
+result[256]='ok'
+#tests[257]=''
+#result[257]='ok'
+tests[260]='sub FETCH_SCALAR_ATTRIBUTES {''} sub MODIFY_SCALAR_ATTRIBUTES {''}; my $a :x=1; print $a'
+result[260]='1'
+tests[261]='q(12-feb-2015) =~ m#(\d\d?)([\-\./])(feb|jan)(?:\2(\d\d+))?#; print $4'
+result[261]='2015'
+tests[262]='use POSIX'
+result[262]=''
+tests[263]='use JSON::XS; print encode_json []'
+result[263]='[]'
+tests[264]='no warnings; warn "$a.\n"'
+result[264]='.'
 
 init
 
@@ -538,7 +1117,7 @@ done
 
 if [ "$(perl -V:gccversion)" != "gccversion='';" ]; then
     if [ "$(uname)" = "Darwin" ]; then
-	CCMD="$CCMD -g"
+	CCMD="$CCMD -g -fno-openmp -fno-var-tracking"
     else
 	CCMD="$CCMD -g3"
     fi

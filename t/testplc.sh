@@ -9,6 +9,7 @@ function help {
   echo " -c                 continue on errors"
   echo " -o                 orig. no -Mblib. only for 5.6 and 5.8"
   echo " -q                 quiet"
+  echo " -v                 avoid -MO,-qq"
   echo " -h                 help"
   echo "t/testplc.sh -q -s -c <=> perl -Mblib t/bytecode.t"
   echo "Without arguments try all $ntests tests. Else the given test numbers."
@@ -16,23 +17,19 @@ function help {
 
 PERL=`grep "^PERL =" Makefile|cut -c8-`
 PERL=${PERL:-perl}
-#PERL=perl5.11.0
 VERS=`echo $PERL|sed -e's,.*perl,,' -e's,.exe$,,'`
 D="`$PERL -e'print (($] < 5.007) ? q(256) : q(v))'`"
+v518=`$PERL -e'print (($] < 5.018)?0:1)'`
 
 function init {
-# test what? core or our module?
-Mblib="`$PERL -e'print (($] < 5.008) ? q() : q(-Mblib))'`"
-#Mblib=${Mblib:--Mblib} # B::C is now fully 5.6+5.8 backwards compatible
-OCMD="$PERL $Mblib -MO=Bytecode,"
-QOCMD="$PERL $Mblib -MO=-qq,Bytecode,"
-ICMD="$PERL $Mblib -MByteLoader"
-if [ "$D" = "256" ]; then QOCMD=$OCMD; fi
-if [ "$Mblib" = " " ]; then VERS="${VERS}_global"; fi
-v513="`$PERL -e'print (($] < 5.013005) ? q() : q(-fno-fold,-fno-warnings,))'`"
-OCMD=${OCMD}${v513}
-QOCMD=${QOCMD}${v513}
-
+    # test what? core or our module?
+    Mblib="`$PERL -e'print (($] < 5.008) ? q() : q(-Iblib/arch -Iblib/lib))'`"
+    #Mblib=${Mblib:--Mblib} # B::C is now fully 5.6+5.8 backwards compatible
+    OCMD="$PERL $Mblib -MO=Bytecode,"
+    QOCMD="$PERL $Mblib -MO=-qq,Bytecode,"
+    ICMD="$PERL $Mblib -MByteLoader"
+    if [ "$D" = "256" ]; then QOCMD=$OCMD; fi
+    if [ "$Mblib" = " " ]; then VERS="${VERS}_global"; fi
 }
 
 function pass {
@@ -47,7 +44,7 @@ function bcall {
     o=$1
     opt=${2:-s}
     ext=${3:-plc}
-    optf=$(echo $opt|sed 's/,-//')
+    optf=$(echo $opt|sed 's/,-//g')
     [ -n "$Q" ] || echo ${QOCMD}-$opt,-o${o}${optf}_${VERS}.${ext} ${o}.pl
     ${QOCMD}-$opt,-o${o}${optf}_${VERS}.${ext} ${o}.pl
 }
@@ -71,7 +68,7 @@ function btest {
     if [ "$Mblib" != " " ]; then 
 	bcall ${o} S,-s asm 1
 	bcall ${o} S,-k asm 1
-	bcall ${o} S,-i asm 1
+	bcall ${o} S,-i,-b asm 1
     fi
   fi
   if [ "$Mblib" != " " -a -z "$SKIP" ]; then 
@@ -99,8 +96,8 @@ function btest {
     [ -n "$Q" ] || echo $PERL $Mblib script/disassemble ${md}.plc \> ${o}SDS_${VERS}.disasm
     $PERL $Mblib script/disassemble ${md}.plc > ${o}SDS_${VERS}.disasm
 
-    bcall ${o} i
-    m=${o}i_${VERS}
+    bcall ${o} i,-b
+    m=${o}ib_${VERS}
     $PERL $Mblib script/disassemble ${m}.plc > ${m}.disasm
     [ -n "$Q" ] || echo ${ICMD} ${m}.plc
     res=$(${ICMD} ${m}.plc)
@@ -169,59 +166,59 @@ ntests=50
 declare -a tests[$ntests]
 declare -a result[$ntests]
 tests[1]="print 'hi'"
-result[1]='hi';
+result[1]='hi'
 tests[2]="for (1,2,3) { print if /\d/ }"
-result[2]='123';
+result[2]='123'
 tests[3]='$_ = "xyxyx"; %j=(1,2); s/x/$j{print("z")}/ge; print $_'
 result[3]='zzz2y2y2';
 tests[4]='$_ = "xyxyx"; %j=(1,2); s/x/$j{print("z")}/g; print $_'
-result[4]='z2y2y2';
+if [[ $v518 -gt 0 ]]; then result[4]='zzz2y2y2'; else result[4]='z2y2y2'; fi
 tests[5]='print split /a/,"bananarama"'
-result[5]='bnnrm';
+result[5]='bnnrm'
 tests[6]="{package P; sub x {print 'ya'} x}"
-result[6]='ya';
+result[6]='ya'
 tests[7]='@z = split /:/,"b:r:n:f:g"; print @z'
-result[7]='brnfg';
+result[7]='brnfg'
 tests[8]='sub AUTOLOAD { print 1 } &{"a"}()'
-result[8]='1';
+result[8]='1'
 tests[9]='my $l = 3; $x = sub { print $l }; &$x'
-result[9]='3';
-tests[10]='my $i = 1; 
+result[9]='3'
+tests[10]='my $i = 1;
 my $foo = sub {
   $i = shift if @_
-}; print $i; 
+}; print $i;
 print &$foo(3),$i;'
-result[10]='133';
+result[10]='133'
 tests[11]='$x="Cannot use"; print index $x, "Can"'
-result[11]='0';
+result[11]='0'
 tests[12]='my $i=6; eval "print \$i\n"'
-result[12]='6';
+result[12]='6'
 tests[13]='BEGIN { %h=(1=>2,3=>4) } print $h{3}'
-result[13]='4';
+result[13]='4'
 tests[14]='open our $T,"a"; print "ok";'
-result[14]='ok';
+result[14]='ok'
 tests[15]='print <DATA>
 __DATA__
 a
 b'
 result[15]='a
-b';
+b'
 tests[16]='BEGIN{tie @a, __PACKAGE__;sub TIEARRAY {bless{}} sub FETCH{1}}; print $a[1]'
-result[16]='1';
+result[16]='1'
 tests[17]='my $i=3; print 1 .. $i'
-result[17]='123';
+result[17]='123'
 tests[18]='my $h = { a=>3, b=>1 }; print sort {$h->{$a} <=> $h->{$b}} keys %$h'
-result[18]='ba';
+result[18]='ba'
 tests[19]='print sort { my $p; $b <=> $a } 1,4,3'
-result[19]='431';
+result[19]='431'
 tests[20]='$a="abcd123";$r=qr/\d/;print $a=~$r;'
-result[20]='1';
+result[20]='1'
 # broken on early alpha and 5.10
 tests[21]='sub skip_on_odd{next NUMBER if $_[0]% 2}NUMBER:for($i=0;$i<5;$i++){skip_on_odd($i);print $i;}'
-result[21]='024';
+result[21]='024'
 # broken in original perl 5.6
-tests[22]='my $fh; BEGIN { open($fh,"<","/dev/null"); } print "ok";';
-result[22]='ok';
+tests[22]='my $fh; BEGIN { open($fh,"<","/dev/null"); } print "ok";'
+result[22]='ok'
 # broken in perl 5.8
 tests[23]='package MyMod; our $VERSION = 1.3; print "ok";'
 result[23]='ok'
@@ -233,7 +230,7 @@ result[24]='ok'
 tests[25]='print sort { print $i++," "; $b <=> $a } 1..4'
 result[25]="0 1 2 3`$PERL -e'print (($] < 5.007) ? q( 4 5) : q())'` 4321";
 # lvalue fails with CC -O1, and with -O2 differently
-tests[26]='sub a:lvalue{my $a=26; ${\(bless \$a)}}sub b:lvalue{${\shift}}; print ${a(b)}';
+tests[26]='sub a:lvalue{my $a=26; ${\(bless \$a)}}sub b:lvalue{${\shift}}; print ${a(b)}'
 result[26]="26";
 # import test
 tests[27]='use Fcntl (); print "ok" if ( Fcntl::O_CREAT() >= 64 && &Fcntl::O_CREAT >= 64 );'
@@ -321,6 +318,13 @@ result[49]='ok'
 # @ISA issue 64
 tests[50]='package Top;sub top{q(ok)};package Next;our @ISA=qw(Top);package main;print Next->top();'
 result[50]='ok'
+tests[51]='$SIG{__WARN__}=sub{print "ok"};warn 1;'
+result[51]='ok'
+# check if general signals work
+tests[511]='BEGIN{$SIG{USR1}=sub{$w++;};} kill USR1 => $$; print q(ok) if $w'
+result[511]='ok'
+tests[68]='package A;sub test{use Data::Dumper();$_ =~ /^(.*?)\d+$/;"Some::Package"->new();}print q(ok);'
+result[68]='ok'
 #-------------
 # issue27
 tests[70]='require LWP::UserAgent;print q(ok);'
@@ -333,7 +337,7 @@ sub x(int,int) { @_ } #cvproto
 print "o" if prototype \&x eq "int,int";
 sub y($) { @_ } #cvproto
 print "k" if prototype \&y eq "\$";'
-result[81]='12'
+result[81]='ok'
 tests[90]='my $s = q(test string);
 $s =~ s/(?<first>test) (?<second>string)/\2 \1/g;
 print q(o) if $s eq q(string test);
@@ -363,16 +367,45 @@ tests[931]='my $f;BEGIN{open($f,"<README");}read $f,my $in, 2; print "ok"'
 result[931]='ok'
 tests[932]='my $f;BEGIN{open($f,">&STDOUT");}print $f "ok"'
 result[932]='ok'
+tests[97]='use v5.12; print q(ok);'
+result[97]='ok'
+tests[971]='use v5.6; print q(ok);'
+result[971]='ok'
+tests[98]='BEGIN{$^H{feature_say} = 1;}
+sub test { eval(""); }
+print q(ok);'
+result[98]='ok'
+tests[105]='package A; use Storable qw/dclone/; my $a = \""; dclone $a; print q(ok);'
+result[105]='ok'
+if [[ $v518 -gt 0 ]]; then
+  tests[130]='no warnings "experimental::lexical_subs";use feature "lexical_subs";my sub p{q(ok)}; my $a=\&p;print p;'
+  result[130]='ok'
+fi
+#issue 30
+tests[230]='sub f1 { my($self) = @_; $self->f2;} sub f2 {} sub new {} print "@ARGV\n";'
+result[230]=''
+#issue 138
+tests[138]='print map { chr $_ } qw/97 98 99/;'
+result[138]='abc'
+tests[261]='q(12-feb-2015) =~ m#(\d\d?)([\-\./])(feb|jan)(?:\2(\d\d+))?#; print $4'
+result[261]='2015'
+tests[264]='no warnings; warn "$a.\n"'
+result[264]='.'
 
 init
 
-while getopts "qsScoh" opt
+while getopts "qsScohv" opt
 do
   if [ "$opt" = "q" ]; then
       Q=1
       OCMD="$QOCMD"
       qq="-qq,"
       if [ "$VERS" = "5.6.2" ]; then QOCMD=$OCMD; qq=""; fi
+  fi
+  if [ "$opt" = "v" ]; then
+      Q=
+      QOCMD="$OCMD"
+      qq=""
   fi
   if [ "$opt" = "s" ]; then SKIP=1; fi
   if [ "$opt" = "o" ]; then Mblib=" "; SKIP=1; SKI=1; init; fi

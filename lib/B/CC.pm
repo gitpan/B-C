@@ -42,6 +42,12 @@ Without extra arguments, it saves the main program.
 
 Output to filename instead of STDOUT
 
+=item B<-c>
+
+Check and abort.
+
+Compiles and prints only warnings, but does not emit C code.
+
 =item B<-v>
 
 Verbose compilation (prints a few compilation stages).
@@ -99,9 +105,17 @@ pv_copy_on_grow
 
 B<-O1> sets B<-ffreetmps-each-bblock>.
 
-B<-O2> adds B<-ffreetmps-each-loop> and B<-fno-destruct> from L<B::C>.
+B<-O2> adds B<-ffreetmps-each-loop>, C<-faelem> and B<-fno-destruct> from L<B::C>.
 
-B<-fomit-taint> and B<-fslow-signals> must be set explicitly.
+The following options must be set explicitly:
+
+  B<-fno-taint> or B<-fomit-taint>,
+
+  B<-fslow-signals>,
+
+  B<-no-autovivify>,
+
+  B<-fno-magic>.
 
 =item B<-f>C<OPTIM>
 
@@ -122,6 +136,13 @@ of basic blocks forming a loop. At most one of the freetmps-each-*
 options can be used.
 
 Enabled with B<-O2>.
+
+=item B<-faelem>
+
+Enable array element access optimizations, allowing unchecked
+fast access under certain circumstances.
+
+Enabled with B<-O2> and not-threaded perls only.
 
 =item B<-fno-inline-ops>
 
@@ -180,20 +201,35 @@ Arithmetic and comparison is inlined. Scalar magic is bypassed.
 
 With C<-fno-name-magic> do not infer a local variable type from its name:
 
-  B<_i> suffix for int, B<_d> for double, B<_ir> for register int
+  B<_i> suffix for int, B<_d> for double/num, B<_ir> for register int
 
 See the experimental C<-ftype-attr> type attributes.
-Currently supported are B<int> and B<double> only. See </load_pad>.
+Currently supported are B<int> and B<num> only. See </load_pad>.
 
 =item B<-ftype-attr> (DOES NOT WORK YET)
 
-Experimentally support B<type attributes> for B<int> and B<double>,
+Experimentally support B<type attributes> for B<int> and B<num>,
 SCALAR only so far.
 For most ops new C vars are used then, not the fat perl vars.
 Very awkward to use until the basic type classes are supported from
 within core or use types.
 
 Enabled with B<-O2>. See L<TYPES> and </load_pad>.
+
+=item B<-fno-autovivify>
+
+Do not vivify array and soon also hash elements when accessing them.
+Beware: Vivified elements default to undef, unvivified elements are
+invalid.
+
+This is the same as the pragma "no autovivification" and allows
+very fast array accesses, 4-6 times faster, without the overhead of
+L<autovivification>.
+
+=item B<-fno-magic>
+
+Assume certain data being optimized is never tied or is holding other magic.
+This mainly holds for arrays being optimized, but in the future hashes also.
 
 =item B<-D>
 
@@ -247,21 +283,20 @@ Add Flags info to the code.
 
 package B::CC;
 
-our $VERSION = '1.12';
+our $VERSION = '1.13';
 
 # Start registering the L<types> namespaces.
-$int::VERSION = $double::VERSION = $string::VERSION = '0.01';
+$main::int::B_CC = $main::num::B_CC = $main::str::B_CC = $main::double::B_CC = $main::string::B_CC = $VERSION;
 
 use Config;
 use strict;
 #use 5.008;
 use B qw(main_start main_root class comppadlist peekop svref_2object
-  timing_info init_av end_av sv_undef amagic_generation
+  timing_info init_av end_av sv_undef
   OPf_WANT_VOID OPf_WANT_SCALAR OPf_WANT_LIST OPf_WANT
-  OPf_MOD OPf_STACKED OPf_SPECIAL
+  OPf_MOD OPf_STACKED OPf_SPECIAL OPpLVAL_DEFER OPpLVAL_INTRO
   OPpASSIGN_BACKWARDS OPpLVAL_INTRO OPpDEREF_AV OPpDEREF_HV
-  OPpDEREF OPpFLIP_LINENUM G_VOID G_SCALAR G_ARRAY
-);
+  OPpDEREF OPpFLIP_LINENUM G_VOID G_SCALAR G_ARRAY);
 #CXt_NULL CXt_SUB CXt_EVAL CXt_SUBST CXt_BLOCK
 use B::C qw(save_unused_subs objsym init_sections mark_unused mark_skip
   output_all output_boilerplate output_main output_main_rest fixup_ppaddr save_sig
@@ -271,8 +306,9 @@ use B::Stackobj qw(:types :flags);
 use B::C::Flags;
 # use attributes qw(get reftype);
 
-@B::OP::ISA = qw(B::NULLOP B);           # support -Do
+@B::OP::ISA = qw(B);                    # support -Do
 @B::LISTOP::ISA = qw(B::BINOP B);       # support -Do
+push @B::OP::ISA, 'B::NULLOP' if exists $main::B::{'NULLOP'};
 
 # These should probably be elsewhere
 # Flags for $op->flags
@@ -314,7 +350,7 @@ my %need_curcop;	# ops which need PL_curcop
 my $package_pv;         # sv->pv of previous op for method_named
 
 my %lexstate;           # state of padsvs at the start of a bblock
-my $verbose;
+my ( $verbose, $check );
 my ( $entertry_defined, $vivify_ref_defined );
 my ( $init_name, %debug, $strict );
 
@@ -322,21 +358,28 @@ my ( $init_name, %debug, $strict );
 # underscores for compatibility with gcc-style options. We use
 # underscores here because they are OK in (strict) barewords.
 # Disable with -fno-
-my ( $freetmps_each_bblock, $freetmps_each_loop, $inline_ops, $omit_taint,
-     $slow_signals, $name_magic, $type_attr, %c_optimise );
+my ( $freetmps_each_bblock, $freetmps_each_loop, $inline_ops, $opt_taint, $opt_omit_taint,
+     $opt_slow_signals, $opt_name_magic, $opt_type_attr, $opt_autovivify, $opt_magic,
+     $opt_aelem, %c_optimise );
 $inline_ops = 1 unless $^O eq 'MSWin32'; # Win32 cannot link to unexported pp_op() XXX
-$name_magic = 1;
+$opt_name_magic = 1;
 my %optimise = (
   freetmps_each_bblock => \$freetmps_each_bblock, # -O1
   freetmps_each_loop   => \$freetmps_each_loop,	  # -O2
+  aelem                => \$opt_aelem,	          # -O2
   inline_ops 	       => \$inline_ops,	  	  # not on Win32
-  omit_taint           => \$omit_taint,
-  slow_signals         => \$slow_signals,
-  name_magic           => \$name_magic,
-  type_attr            => \$type_attr
+  omit_taint           => \$opt_omit_taint,
+  taint                => \$opt_taint,
+  slow_signals         => \$opt_slow_signals,
+  name_magic           => \$opt_name_magic,
+  type_attr            => \$opt_type_attr,
+  autovivify           => \$opt_autovivify,
+  magic                => \$opt_magic,
 );
 my %async_signals = map { $_ => 1 } # 5.14 ops which do PERL_ASYNC_CHECK
   qw(wait waitpid nextstate and cond_expr unstack or subst dorassign);
+$async_signals{$_} = 1 for # more 5.16 ops which do PERL_ASYNC_CHECK
+  qw(substcont next redo goto leavewhen);
 # perl patchlevel to generate code for (defaults to current patchlevel)
 my $patchlevel = int( 0.5 + 1000 * ( $] - 5 ) );    # XXX unused?
 my $MULTI      = $Config{usemultiplicity};
@@ -347,15 +390,33 @@ my $PERL512    = ( $] >= 5.011 );
 my $SVt_PVLV = $PERL510 ? 10 : 9;
 my $SVt_PVAV = $PERL510 ? 11 : 10;
 # use sub qw(CXt_LOOP_PLAIN CXt_LOOP);
-if ($PERL512) {
-  sub CXt_LOOP_PLAIN {5} # CXt_LOOP_FOR CXt_LOOP_LAZYSV CXt_LOOP_LAZYIV
-} else {
-  sub CXt_LOOP {3}
-}
-sub CxTYPE_no_LOOP  {
-  $PERL512 
-    ? ( $_[0]->{type} < 4 or $_[0]->{type} > 7 )
-    : $_[0]->{type} != 3
+BEGIN {
+  if ($PERL512) {
+    sub CXt_LOOP_PLAIN {5} # CXt_LOOP_FOR CXt_LOOP_LAZYSV CXt_LOOP_LAZYIV
+  } else {
+    sub CXt_LOOP {3}
+  }
+  sub CxTYPE_no_LOOP  {
+    $PERL512
+      ? ( $_[0]->{type} < 4 or $_[0]->{type} > 7 )
+        : $_[0]->{type} != 3
+  }
+  if ($] < 5.008) {
+    eval "sub SVs_RMG {0x8000};";
+  } else {
+    B->import('SVs_RMG');
+  }
+  if ($] <= 5.010) {
+    eval "sub PMf_ONCE() {0xff}; # unused";
+  } elsif ($] >= 5.018) { # PMf_ONCE not exported
+    eval q[sub PMf_ONCE(){ 0x10000 }];
+  } elsif ($] >= 5.014) {
+    eval q[sub PMf_ONCE(){ 0x8000 }];
+  } elsif ($] >= 5.012) {
+    eval q[sub PMf_ONCE(){ 0x0080 }];
+  } else { # 5.10. not used with <= 5.8
+    eval q[sub PMf_ONCE(){ 0x0002 }];
+  }
 }
 
 # Could rewrite push_runtime() and output_runtime() to use a
@@ -439,7 +500,7 @@ sub output_runtime {
   # Fixed in CORE with 5.11.4
   print'
 #undef PP_ENTERTRY
-#define PP_ENTERTRY(label)  	\
+#define PP_ENTERTRY(label)  	        \
 	STMT_START {                    \
 	    dJMPENV;			\
 	    int ret;			\
@@ -547,7 +608,41 @@ Perl_vivify_ref(pTHX_ SV *sv, U32 to_what)
 }
 
 __EOV
+
   }
+
+    print '
+
+OP *Perl_pp_aelem_nolval(pTHXx);
+#ifndef SVfARG
+# define SVfARG(x) (void *)x
+#endif
+#ifndef MUTABLE_AV
+# define MUTABLE_AV(av) av
+#endif
+PP(pp_aelem_nolval)
+{
+    dSP;
+    SV** svp;
+    SV* const elemsv = POPs;
+    IV elem = SvIV(elemsv);
+    AV *const av = MUTABLE_AV(POPs);
+    SV *sv;
+
+#if PERL_VERSION > 6
+    if (SvROK(elemsv) && !SvGAMAGIC(elemsv) && ckWARN(WARN_MISC))
+        Perl_warner(aTHX_ packWARN(WARN_MISC),
+                    "Use of reference \"%"SVf"\" as array index",
+                    SVfARG(elemsv));
+#endif
+    if (SvTYPE(av) != SVt_PVAV)	RETPUSHUNDEF;
+    svp = av_fetch(av, elem, 0);
+    sv = (svp ? *svp : &PL_sv_undef);
+    if (SvRMAGICAL(av) && SvGMAGICAL(sv)) mg_get(sv);
+    PUSHs(sv);
+    RETURN;
+}
+' if 0;
 
   foreach $ppdata (@pp_list) {
     my ( $name, $runtime, $declare ) = @$ppdata;
@@ -609,7 +704,11 @@ sub cc_queue {
   } else {
     push( @cc_todo, [ $name, $root, $start, ( @pl ? @pl : @padlist ) ] );
   }
-  my $fakeop = B::FAKEOP->new( "next" => 0, sibling => 0, ppaddr => $name,
+  my $fakeop_next = 0;
+  if ($name =~ /^pp_sub_IO_.*DESTROY$/) {
+    $fakeop_next = $start->next->save;
+  }
+  my $fakeop = B::FAKEOP->new( "next" => $fakeop_next, sibling => 0, ppaddr => $name,
                                targ=>0, type=>0, flags=>0, private=>0);
   $start = $fakeop->save;
   debug "cc_queue: name $name returns $start\n" if $debug{queue};
@@ -618,19 +717,22 @@ sub cc_queue {
 BEGIN { B::C::set_callback( \&cc_queue ) }
 
 sub valid_int     { $_[0]->{flags} & VALID_INT }
-sub valid_double  { $_[0]->{flags} & VALID_DOUBLE }
-sub valid_numeric { $_[0]->{flags} & ( VALID_INT | VALID_DOUBLE ) }
+sub valid_double  { $_[0]->{flags} & VALID_NUM }
+sub valid_numeric { $_[0]->{flags} & ( VALID_INT | VALID_NUM ) }
+sub valid_str     { $_[0]->{flags} & VALID_STR }
 sub valid_sv      { $_[0]->{flags} & VALID_SV }
 
 sub top_int     { @stack ? $stack[-1]->as_int     : "TOPi" }
 sub top_double  { @stack ? $stack[-1]->as_double  : "TOPn" }
 sub top_numeric { @stack ? $stack[-1]->as_numeric : "TOPn" }
 sub top_sv      { @stack ? $stack[-1]->as_sv      : "TOPs" }
+sub top_str     { @stack ? $stack[-1]->as_str     : "TOPs" }
 sub top_bool    { @stack ? $stack[-1]->as_bool    : "SvTRUE(TOPs)" }
 
 sub pop_int     { @stack ? ( pop @stack )->as_int     : "POPi" }
 sub pop_double  { @stack ? ( pop @stack )->as_double  : "POPn" }
 sub pop_numeric { @stack ? ( pop @stack )->as_numeric : "POPn" }
+sub pop_str     { @stack ? ( pop @stack )->as_str      : "POPs" }
 sub pop_sv      { @stack ? ( pop @stack )->as_sv      : "POPs" }
 
 sub pop_bool {
@@ -687,20 +789,24 @@ sub save_or_restore_lexical_state {
       if ( $changed & VALID_SV ) {
         ( $old_flags & VALID_SV ) ? $lex->write_back : $lex->invalidate;
       }
-      if ( $changed & VALID_DOUBLE ) {
-        ( $old_flags & VALID_DOUBLE ) ? $lex->load_double : $lex->invalidate_double;
+      if ( $changed & VALID_NUM ) {
+        ( $old_flags & VALID_NUM ) ? $lex->load_double : $lex->invalidate_double;
       }
       if ( $changed & VALID_INT ) {
         ( $old_flags & VALID_INT ) ? $lex->load_int : $lex->invalidate_int;
+      }
+      if ( $changed & VALID_STR ) {
+        ( $old_flags & VALID_STR ) ? $lex->load_str : $lex->invalidate_str;
       }
     }
   }
 }
 
 sub write_back_stack {
+  debug "write_back_stack() ".scalar(@stack)." called from @{[(caller(1))[3]]}\n"
+    if $debug{shadow};
   return unless @stack;
   runtime( sprintf( "EXTEND(sp, %d);", scalar(@stack) ) );
-  # return unless @stack;
   foreach my $obj (@stack) {
     runtime( sprintf( "PUSHs((SV*)%s);", $obj->as_sv ) );
   }
@@ -726,8 +832,11 @@ sub reload_lexicals {
     if ( $type == T_INT ) {
       $lex->as_int;
     }
-    elsif ( $type == T_DOUBLE ) {
+    elsif ( $type == T_NUM ) {
       $lex->as_double;
+    }
+    elsif ( $type == T_STR ) {
+      $lex->as_str;
     }
     else {
       $lex->as_sv;
@@ -743,8 +852,8 @@ sub reload_lexicals {
   # This class allocates pseudo-registers (OK, so they're C variables).
   #
   my %alloc;   # Keyed by variable name. A value of 1 means the
-                # variable has been declared. A value of 2 means
-                # it's in use.
+               # variable has been declared. A value of 2 means
+               # it's in use.
 
   sub new_scope { %alloc = () }
 
@@ -756,10 +865,10 @@ sub reload_lexicals {
     $i   = 0;
     do {
       $varname = "$prefix$i";
-      $status  = $alloc{$varname};
+      $status  = exists $alloc{$varname} ? $alloc{$varname} : 0;
     } while $status == 2;
-    if ( $status != 1 ) {
 
+    if ( $status != 1 ) {
       # Not declared yet
       B::CC::declare( $type, "$ptr$varname" );
       $alloc{$varname} = 2;    # declared and in use
@@ -801,6 +910,10 @@ sub reload_lexicals {
     $obj->[0] = $newval;
   }
 
+  sub value {
+    return $_[0]->[0];
+  }
+
   sub write_back {
     my $obj = shift;
     if ( !( $obj->[1] ) ) {
@@ -813,7 +926,8 @@ sub reload_lexicals {
 
 my $curcop = B::Shadow->new(
   sub {
-    my $opsym = shift->save;
+    my $op = shift;
+    my $opsym = $op->save;
     runtime("PL_curcop = (COP*)$opsym;");
   }
 );
@@ -884,7 +998,7 @@ sub error {
 sub init_type_attrs {
   eval q[
 
-  our $valid_attr = '^(int|double|string|unsigned|register|temporary|ro|readonly|const)$';
+  our $valid_attr = '^(int|num|str|double|string|unsigned|register|temporary|ro|readonly|const)$';
   sub MODIFY_SCALAR_ATTRIBUTES {
     my $pkg = shift;
     my $v = shift;
@@ -905,20 +1019,26 @@ sub init_type_attrs {
   }
 
   # pollute our callers namespace for attributes to be accepted with -MB::CC
-  sub main::MODIFY_SCALAR_ATTRIBUTES { B::CC::MODIFY_SCALAR_ATTRIBUTES(@_)}
-  sub main::FETCH_SCALAR_ATTRIBUTES { B::CC::FETCH_SCALAR_ATTRIBUTES(@_) };
+  *main::MODIFY_SCALAR_ATTRIBUTES = \&B::CC::MODIFY_SCALAR_ATTRIBUTES;
+  *main::FETCH_SCALAR_ATTRIBUTES  = \&B::CC::FETCH_SCALAR_ATTRIBUTES;
 
   # my int $i : register : ro;
-  sub int::MODIFY_SCALAR_ATTRIBUTES { B::CC::MODIFY_SCALAR_ATTRIBUTES(@_)}
-  sub int::FETCH_SCALAR_ATTRIBUTES { B::CC::FETCH_SCALAR_ATTRIBUTES(@_) };
+  *int::MODIFY_SCALAR_ATTRIBUTES = \&B::CC::MODIFY_SCALAR_ATTRIBUTES;
+  *int::FETCH_SCALAR_ATTRIBUTES  = \&B::CC::FETCH_SCALAR_ATTRIBUTES;
 
   # my double $d : ro;
-  sub double::MODIFY_SCALAR_ATTRIBUTES { B::CC::MODIFY_SCALAR_ATTRIBUTES(@_)}
-  sub double::FETCH_SCALAR_ATTRIBUTES { B::CC::FETCH_SCALAR_ATTRIBUTES(@_) };
+  *num::MODIFY_SCALAR_ATTRIBUTES = \&B::CC::MODIFY_SCALAR_ATTRIBUTES;
+  *num::FETCH_SCALAR_ATTRIBUTES  = \&B::CC::FETCH_SCALAR_ATTRIBUTES;
+  *str::MODIFY_SCALAR_ATTRIBUTES = \&B::CC::MODIFY_SCALAR_ATTRIBUTES;
+  *str::FETCH_SCALAR_ATTRIBUTES  = \&B::CC::FETCH_SCALAR_ATTRIBUTES;
 
-  sub string::MODIFY_SCALAR_ATTRIBUTES { B::CC::MODIFY_SCALAR_ATTRIBUTES(@_)}
-  sub string::FETCH_SCALAR_ATTRIBUTES { B::CC::FETCH_SCALAR_ATTRIBUTES(@_) };
+  # deprecated:
+  *double::MODIFY_SCALAR_ATTRIBUTES = \&B::CC::MODIFY_SCALAR_ATTRIBUTES;
+  *double::FETCH_SCALAR_ATTRIBUTES  = \&B::CC::FETCH_SCALAR_ATTRIBUTES;
+  *string::MODIFY_SCALAR_ATTRIBUTES = \&B::CC::MODIFY_SCALAR_ATTRIBUTES;
+  *string::FETCH_SCALAR_ATTRIBUTES  = \&B::CC::FETCH_SCALAR_ATTRIBUTES;
   ];
+
 }
 
 =head2 load_pad
@@ -961,37 +1081,41 @@ sub load_pad {
       my ($nametry) = $namesv->PV =~ /^\$(.+)$/ if $namesv->PV;
       $name = $nametry if $nametry;
 
-      # my int $i; my double $d; compiled code only, unless the source provides the int and double packages.
+      # my int $i; my num $d; compiled code only, unless the source provides the int and num packages.
       # With Ctypes it is easier. my c_int $i; defines an external Ctypes int, which can be efficiently
       # compiled in Perl also.
-      # XXX Better use attributes, like my $i:int; my $d:double; which works un-compiled also.
+      # XXX Better use attributes, like my $i:int; my $d:num; which works un-compiled also.
       if (ref($namesv) eq 'B::PVMG' and ref($namesv->SvSTASH) eq 'B::HV') { # my int
         $class = $namesv->SvSTASH->NAME;
         if ($class eq 'int') {
           $type  = T_INT;
           $flags = VALID_SV | VALID_INT;
         }
-        elsif ($class eq 'double') { # my double
-          $type  = T_DOUBLE;
-          $flags = VALID_SV | VALID_DOUBLE;
+        elsif ($class eq 'num' or $class eq 'double') { # my num
+          $type  = T_NUM;
+          $flags = VALID_SV | VALID_NUM;
+        }
+        elsif ($class eq 'str' or $class eq 'string') { # my str
+          $type  = T_STR;
+          $flags = VALID_SV | VALID_STR;
         }
         #elsif ($class eq 'c_int') {  # use Ctypes;
         #  $type  = T_INT;
         #  $flags = VALID_SV | VALID_INT;
         #}
         #elsif ($class eq 'c_double') {
-        #  $type  = T_DOUBLE;
-        #  $flags = VALID_SV | VALID_DOUBLE;
+        #  $type  = T_NUM;
+        #  $flags = VALID_SV | VALID_NUM;
         #}
         # TODO: MooseX::Types
       }
 
       # Valid scalar type attributes:
-      #   int double string ro readonly const unsigned
+      #   int num str ro readonly const unsigned
       # Note: PVMG from above also.
       # Typed arrays and hashes later.
       if (0 and $class =~ /^(I|P|S|N)V/
-	  and $type_attr
+	  and $opt_type_attr
 	  and UNIVERSAL::can($class,"CHECK_SCALAR_ATTRIBUTES")) # with 5.18
       {
         require attributes;
@@ -1005,15 +1129,19 @@ sub load_pad {
       # XXX We should try Devel::TypeCheck for type inference also
 
       # magic names: my $i_ir, my $d_d. without -fno-name-magic cmdline option only
-      if ( $type == T_UNKNOWN and $name_magic and $name =~ /^(.*)_([di])(r?)$/ ) {
+      if ( $type == T_UNKNOWN and $opt_name_magic and $name =~ /^(.*)_([dis])(r?)$/ ) {
         $name = $1;
         if ( $2 eq "i" ) {
           $type  = T_INT;
           $flags = VALID_SV | VALID_INT;
         }
         elsif ( $2 eq "d" ) {
-          $type  = T_DOUBLE;
-          $flags = VALID_SV | VALID_DOUBLE;
+          $type  = T_NUM;
+          $flags = VALID_SV | VALID_NUM;
+        }
+        elsif ( $2 eq "s" ) {
+          $type  = T_STR;
+          $flags = VALID_SV | VALID_STR;
         }
         $flags |= REGISTER if $3;
       }
@@ -1033,12 +1161,16 @@ sub declare_pad {
     declare( "IV",
       $type == T_INT ? sprintf( "%s=0", $pad[$ix]->{iv} ) : $pad[$ix]->{iv} )
       if $pad[$ix]->save_int;
-    declare( "double",
-      $type == T_DOUBLE
-      ? sprintf( "%s = 0", $pad[$ix]->{nv} )
-      : $pad[$ix]->{nv} )
+    declare( "NV",
+      $type == T_NUM
+        ? sprintf( "%s = 0", $pad[$ix]->{nv} )
+        : $pad[$ix]->{nv} )
       if $pad[$ix]->save_double;
-
+    declare( "PV",
+      $type == T_STR
+        ? sprintf( "%s = 0", $pad[$ix]->{sv} )
+        : $pad[$ix]->{sv} )
+      if $pad[$ix]->save_str;
   }
 }
 
@@ -1076,6 +1208,7 @@ sub label {
 
 sub write_label {
   my $op = shift;
+  $op->save if $$op;
   # debug sprintf("lab_%x:?\n", $$op) if $debug{cxstack};
   unless ($labels->{label}->{$$op}) {
     my $l = label($op);
@@ -1189,11 +1322,14 @@ sub pp_and {
     my $bool = $obj->as_bool;
     write_back_stack();
     save_or_restore_lexical_state($$next);
-    runtime(
-      sprintf(
-        "if (!$bool) { PUSHs((SV*)%s); goto %s;}", $obj->as_sv, label($next)
-      )
-    );
+    if ($bool =~ /POPs/) {
+      runtime("sv = $bool;",
+	      sprintf("if (!sv) { PUSHs(sv); goto %s;}", label($next)));
+    } else {
+      runtime(sprintf(
+		"if (!$bool) { PUSHs((SV*)%s); goto %s;}", $obj->as_sv, label($next)
+	      ));
+    }
   }
   else {
     save_or_restore_lexical_state($$next);
@@ -1214,11 +1350,15 @@ sub pp_andassign {
     my $bool = $obj->as_bool;
     write_back_stack();
     save_or_restore_lexical_state($$next);
-    runtime(
-      sprintf(
-        "PUSHs((SV*)%s); if (!$bool) { goto %s;}", $obj->as_sv, label($next)
-      )
-    );
+    if ($bool =~ /POPs/) {
+      runtime("sv = $bool;",
+	      sprintf("PUSHs((SV*)%s); if (!$bool) { goto %s;}",
+		      $obj->as_sv, label($next)));
+    } else {
+      runtime(
+	sprintf("PUSHs((SV*)%s); if (!$bool) { goto %s;}",
+		$obj->as_sv, label($next)));
+    }
   }
   else {
     save_or_restore_lexical_state($$next);
@@ -1238,11 +1378,13 @@ sub pp_or {
     my $bool = $obj->as_bool;
     write_back_stack();
     save_or_restore_lexical_state($$next);
-    runtime(
-      sprintf(
-        "if ($bool) { PUSHs((SV*)%s); goto %s; }", $obj->as_sv, label($next)
-      )
-    );
+    if ($bool =~ /POPs/) {
+      runtime("sv = $bool;",
+	      sprintf("if (sv) { PUSHs(sv); goto %s;}", label($next)));
+    } else {
+      runtime(
+	sprintf("if ($bool) { PUSHs((SV*)%s); goto %s; }", $obj->as_sv, label($next)));
+    }
   }
   else {
     save_or_restore_lexical_state($$next);
@@ -1370,16 +1512,17 @@ sub pp_nextstate {
     write_label($op);
   }
   $curcop->load($op);
+  loadop($op);
   @stack = ();
   debug( sprintf( "%s:%d\n", $op->file, $op->line ) ) if $debug{lineno};
   debug( sprintf( "CopLABEL %s\n", $op->label ) ) if $op->label and $debug{cxstack};
-  runtime("TAINT_NOT;") unless $omit_taint;
-  runtime("sp = PL_stack_base + cxstack[cxstack_ix].blk_oldsp;");
+  runtime("TAINT_NOT;") if $opt_taint; # TODO Not always needed (resets PL_taint = 0)
+  runtime("sp = PL_stack_base + cxstack[cxstack_ix].blk_oldsp;"); # TODO reset sp not needed always
   if ( $freetmps_each_bblock || $freetmps_each_loop ) {
     $need_freetmps = 1;
   }
   else {
-    runtime("FREETMPS;");
+    runtime("FREETMPS;"); # TODO Not always needed
   }
   return $op->next;
 }
@@ -1417,7 +1560,7 @@ sub pp_regcreset {
     warn "inlining regcreset\n" if $debug{op};
     $curcop->write_back if $curcop;
     runtime 'PL_reginterp_cnt = 0;	/* pp_regcreset */';
-    runtime 'TAINT_NOT;';
+    runtime 'TAINT_NOT;' if $opt_taint;
     return $op->next;
   } else {
     default_pp(@_);
@@ -1579,7 +1722,7 @@ sub pp_sort {
     $op->first->sibling->save; #null->first to leave
     $root->save;               #ex-leave
     my $sym = $start->save;    #enter
-    my $fakeop = cc_queue( "pp_sort" . $$op, $root, $start );
+    my $fakeop = cc_queue( "pp_sort" . sprintf("%x",abs($$op)), $root, $start );
     $init->add( sprintf( "(%s)->op_next = %s;", $sym, $fakeop ) );
   }
   $curcop->write_back;
@@ -1637,19 +1780,40 @@ sub pp_gvsv {
   return $op->next;
 }
 
+# Check for faster fetch calls. Returns 0 if the fast 'no' is in effect.
+sub autovivification {
+  if (!$opt_autovivify) {
+    return 0;
+  } elsif ($INC{'autovivification.pm'}) {
+    return _autovivification($curcop->[0]);
+  } else {
+    return 1;
+  }
+}
+
 # coverage: 16, issue44
 sub pp_aelemfast {
   my $op = shift;
-  my $av;
+  my ($av, $rmg);
   if ($op->flags & OPf_SPECIAL) {
     my $sv = $pad[ $op->targ ]->as_sv;
-    $av = $] > 5.01000 ? "MUTABLE_AV($sv)" : $sv;
+    my @c = comppadlist->ARRAY;
+    my @p = $c[1]->ARRAY;
+    my $lex = $p[ $op->targ ];
+    $rmg  = ($lex and ref $lex eq 'B::AV' and ($lex->MAGICAL & SVs_RMG or !$lex->ARRAY)) ? 1 : 0;
+    # MUTABLE_AV is only needed to catch compiler const loss
+    # $av = $] > 5.01000 ? "MUTABLE_AV($sv)" : $sv;
+    $av = "(AV*)$sv";
   } else {
     my $gvsym;
     if ($ITHREADS) { #padop XXX if it's only a OP, no PADOP? t/CORE/op/ref.t test 36
       if ($op->can('padix')) {
         #warn "padix\n";
         $gvsym = $pad[ $op->padix ]->as_sv;
+	my @c = comppadlist->ARRAY; # XXX curpad, not comppad!!
+	my @p = $c[1]->ARRAY;
+	my $lex = $p[ $op->padix ];
+	$rmg  = ($lex and ref $lex eq 'B::AV' and ($lex->MAGICAL & SVs_RMG or !$lex->ARRAY)) ? 1 : 0;
       } else {
         $gvsym = 'PL_incgv'; # XXX passes, but need to investigate why. cc test 43 5.10.1
         #write_back_stack();
@@ -1658,22 +1822,64 @@ sub pp_aelemfast {
       }
     }
     else { #svop
-      $gvsym = $op->gv->save;
+      my $gv = $op->gv;
+      $gvsym = $gv->save;
+      my $gvav = $gv->AV; # test 16, tied gvav
+      $rmg  = $] < 5.007 ? 0 : ($gvav and ($gvav->MAGICAL & SVs_RMG  or !$gvav->ARRAY)) ? 1 : 0;
     }
     $av = "GvAV($gvsym)";
   }
   my $ix   = $op->private;
   my $lval = $op->flags & OPf_MOD;
-  write_back_stack();
-  runtime(
-    "{ AV* av = $av;",
-    "  SV** const svp = av_fetch(av, $ix, $lval);",
-    "  SV *sv = (svp ? *svp : &PL_sv_undef);",
-    !$lval ? "  if (SvRMAGICAL(av) && SvGMAGICAL(sv)) mg_get(sv);" : "",
-    "  PUSHs(sv);",
-    "}"
-  );
+  my $vivify = !$rmg ? autovivification() : 1; # no need to call if $rmg
+  debug "aelemfast: vivify=$vivify, rmg=$rmg, lval=$lval, -fautovivify=$opt_autovivify -faelem=$opt_aelem\n" if $debug{pad};
+  return _aelem($op, $av, $ix, $lval, $rmg, $vivify);
+}
+
+sub _aelem {
+  my ($op, $av, $ix, $lval, $rmg, $vivify) = @_;
+  if ($opt_aelem and !$rmg and !$vivify and $ix >= 0) {
+    push @stack, B::Stackobj::Aelem->new($av, $ix, $lval);
+  } else {
+    write_back_stack();
+    runtime(
+      "{ AV* av = (AV*)$av;",
+      "  SV** const svp = av_fetch(av, $ix, $lval);",
+      "  SV *sv = (svp ? *svp : &PL_sv_undef);",
+      (!$lval and $rmg) ? "  if (SvRMAGICAL(av) && SvGMAGICAL(sv)) mg_get(sv);" : "",
+      "  PUSHs(sv);",
+      "}"
+    );
+  }
   return $op->next;
+}
+
+# coverage: ?
+sub pp_aelem {
+  my $op = shift;
+  my ($ix, $av);
+  my $lval = ($op->flags & OPf_MOD or $op->private & (OPpLVAL_DEFER || OPpLVAL_INTRO)) ? 1 : 0;
+  my $vivify = autovivification();
+  my $rmg = $opt_magic;  # use -fno-magic for the av (2nd stack arg)
+  if (@stack >= 1) { # at least ix
+    $ix = pop_int(); # TODO: substract CopARYBASE from ix
+    if (@stack >= 1) {
+      my $avobj = $stack[-1]->as_obj;
+      $rmg  = ($avobj and $avobj->MAGICAL & SVs_RMG) ? 1 : 0;
+    }
+    $av = pop_sv();
+    debug "aelem: vivify = $vivify, rmg = $rmg, lval = $lval\n" if $debug{pad};
+    return _aelem($op, $av, $ix, $lval, $rmg, $vivify);
+  } else {
+    if ($lval or $rmg) { # always
+      return default_pp($op);
+    } else {
+      $ix = pop_int(); # TODO: substract CopARYBASE from ix
+      $av = pop_sv();
+      debug "aelem: vivify = $vivify, rmg = $rmg, lval = $lval\n" if $debug{pad};
+      return _aelem($op, $av, $ix, $lval, $rmg, $vivify);
+    }
+  }
 }
 
 # coverage: ?
@@ -1705,10 +1911,11 @@ sub INTS_CLOSED ()    { 0x1 }
 sub INT_RESULT ()     { 0x2 }
 sub NUMERIC_RESULT () { 0x4 }
 
-# coverage: ?
+# coverage: 101
 sub numeric_binop {
   my ( $op, $operator, $flags ) = @_;
   my $force_int = 0;
+  $flags = 0 unless $flags;
   $force_int ||= ( $flags & INT_RESULT );
   $force_int ||=
     (    $flags & INTS_CLOSED
@@ -1738,7 +1945,7 @@ sub numeric_binop {
         );
       }
       else {
-        my $rightruntime = B::Pseudoreg->new( "double", "rnv" );
+        my $rightruntime = B::Pseudoreg->new( "NV", "rnv" );
         runtime( sprintf( "$$rightruntime = %s;\t/* %s */", $right, $op->name ) );
         runtime(
           sprintf(
@@ -1755,20 +1962,48 @@ sub numeric_binop {
       my $right = B::Pseudoreg->new( "IV", "riv" );
       my $left  = B::Pseudoreg->new( "IV", "liv" );
       runtime(
-        sprintf( "$$right = %s; $$left = %s;\t/* %s */",
-                 pop_numeric(), pop_numeric, $op->name ) );
+        sprintf( "$$right = %s;", pop_numeric()),
+        sprintf( "$$left = %s;\t/* %s */", pop_numeric(), pop_numeric(), $op->name ) );
       $targ->set_int( &$operator( $$left, $$right ) );
     }
     else {
-      my $right = B::Pseudoreg->new( "double", "rnv" );
-      my $left  = B::Pseudoreg->new( "double", "lnv" );
+      my $right = B::Pseudoreg->new( "NV", "rnv" );
+      my $left  = B::Pseudoreg->new( "NV", "lnv" );
       runtime(
-        sprintf( "$$right = %s; $$left = %s;\t/* %s */",
-                 pop_numeric(), pop_numeric, $op->name ) );
+        sprintf( "$$right = %s;", pop_numeric()),
+        sprintf( "$$left = %s;\t/* %s */", pop_numeric(), $op->name ) );
       $targ->set_numeric( &$operator( $$left, $$right ) );
     }
     push( @stack, $targ );
   }
+  return $op->next;
+}
+
+sub numeric_unop {
+  my ( $op, $operator, $flags ) = @_;
+  my $force_int = 0;
+  $force_int ||= ( $flags & INT_RESULT );
+  $force_int ||=
+    (    $flags & INTS_CLOSED
+      && @stack >= 1
+      && valid_int( $stack[-1] ) );
+  my $targ = $pad[ $op->targ ];
+  $force_int ||= ( $targ->{type} == T_INT );
+  if ($force_int) {
+    my $arg  = B::Pseudoreg->new( "IV", "liv" );
+    runtime(sprintf( "$$arg = %s;\t/* %s */",
+                     pop_numeric, $op->name ) );
+    # XXX set targ?
+    $targ->set_int( &$operator( $$arg ) );
+  }
+  else {
+    my $arg  = B::Pseudoreg->new( "NV", "lnv" );
+    runtime(sprintf( "$$arg = %s;\t/* %s */",
+                     pop_numeric, $op->name ) );
+    # XXX set targ?
+    $targ->set_numeric( &$operator( $$arg ) );
+  }
+  push( @stack, $targ );
   return $op->next;
 }
 
@@ -1793,7 +2028,7 @@ sub pp_ncmp {
       runtime "}";
     }
     else {
-      my $rightruntime = B::Pseudoreg->new( "double", "rnv" );
+      my $rightruntime = B::Pseudoreg->new( "NV", "rnv" );
       runtime( sprintf( "$$rightruntime = %s;\t/* %s */", $right, $op->name ) );
       runtime sprintf( qq/if ("TOPn" > %s){/, $rightruntime );
       runtime sprintf("  sv_setiv(TOPs,1);");
@@ -1808,8 +2043,8 @@ sub pp_ncmp {
   }
   else {
     my $targ  = $pad[ $op->targ ];
-    my $right = B::Pseudoreg->new( "double", "rnv" );
-    my $left  = B::Pseudoreg->new( "double", "lnv" );
+    my $right = B::Pseudoreg->new( "NV", "rnv" );
+    my $left  = B::Pseudoreg->new( "NV", "lnv" );
     runtime(
       sprintf( "$$right = %s; $$left = %s;\t/* %s */",
                pop_numeric(), pop_numeric, $op->name ) );
@@ -1904,8 +2139,8 @@ sub bool_int_binop {
 # coverage: ?
 sub bool_numeric_binop {
   my ( $op, $operator ) = @_;
-  my $right = B::Pseudoreg->new( "double", "rnv" );
-  my $left  = B::Pseudoreg->new( "double", "lnv" );
+  my $right = B::Pseudoreg->new( "NV", "rnv" );
+  my $left  = B::Pseudoreg->new( "NV", "lnv" );
   runtime(
     sprintf( "$$right = %s; $$left = %s;\t/* %s */",
              pop_numeric(), pop_numeric(), $op->name ) );
@@ -2004,6 +2239,20 @@ BEGIN {
   sub pp_sge { bool_sv_binop( $_[0], $sge_op ) }
   sub pp_seq { bool_sv_binop( $_[0], $seq_op ) }
   sub pp_sne { bool_sv_binop( $_[0], $sne_op ) }
+
+#  sub pp_sin  { numeric_unop( $_[0], prefix_op("Perl_sin"), NUMERIC_RESULT ) }
+#  sub pp_cos  { numeric_unop( $_[0], prefix_op("Perl_cos"), NUMERIC_RESULT ) }
+#  sub pp_exp  { numeric_unop( $_[0], prefix_op("Perl_exp"), NUMERIC_RESULT ) }
+#  sub pp_abs  { numeric_unop( $_[0], prefix_op("abs") ) }
+#  sub pp_negate { numeric_unop( $_[0], sub { "- $_[0]" }; ) }
+
+# pow has special perl logic
+##  sub pp_pow  { numeric_binop( $_[0], prefix_op("Perl_pow"), NUMERIC_RESULT ) }
+#XXX log and sqrt need to check negative args
+#  sub pp_sqrt { numeric_unop( $_[0], prefix_op("Perl_sqrt"), NUMERIC_RESULT ) }
+#  sub pp_log  { numeric_unop( $_[0], prefix_op("Perl_log"), NUMERIC_RESULT ) }
+#  sub pp_atan2 { numeric_binop( $_[0], prefix_op("Perl_atan2"), NUMERIC_RESULT ) }
+
 }
 
 # coverage: 3,4,9,10,11,12,17,18,20,21,23
@@ -2021,7 +2270,7 @@ sub pp_sassign {
     if ( $type == T_INT ) {
       $dst->set_int( $src->as_int, $src->{flags} & VALID_UNSIGNED );
     }
-    elsif ( $type == T_DOUBLE ) {
+    elsif ( $type == T_NUM ) {
       $dst->set_numeric( $src->as_numeric );
     }
     else {
@@ -2033,7 +2282,7 @@ sub pp_sassign {
     if ($backwards) {
       my $src  = pop @stack;
       my $type = $src->{type};
-      runtime("if (PL_tainting && PL_tainted) TAINT_NOT;");
+      runtime("if (PL_tainting && PL_tainted) TAINT_NOT;") if $opt_taint;
       if ( $type == T_INT ) {
         if ( $src->{flags} & VALID_UNSIGNED ) {
           runtime sprintf( "sv_setuv(TOPs, %s);", $src->as_int );
@@ -2042,27 +2291,29 @@ sub pp_sassign {
           runtime sprintf( "sv_setiv(TOPs, %s);", $src->as_int );
         }
       }
-      elsif ( $type == T_DOUBLE ) {
+      elsif ( $type == T_NUM ) {
         runtime sprintf( "sv_setnv(TOPs, %s);", $src->as_double );
       }
       else {
         runtime sprintf( "sv_setsv(TOPs, %s);", $src->as_sv );
       }
-      runtime("SvSETMAGIC(TOPs);");
+      runtime("SvSETMAGIC(TOPs);") if $opt_magic;
     }
     else {
       my $dst  = $stack[-1];
       my $type = $dst->{type};
       runtime("sv = POPs;");
-      runtime("MAYBE_TAINT_SASSIGN_SRC(sv);");
+      runtime("MAYBE_TAINT_SASSIGN_SRC(sv);") if $opt_taint;
       if ( $type == T_INT ) {
         $dst->set_int("SvIV(sv)");
       }
-      elsif ( $type == T_DOUBLE ) {
+      elsif ( $type == T_NUM ) {
         $dst->set_double("SvNV(sv)");
       }
       else {
-        runtime("SvSetMagicSV($dst->{sv}, sv);");
+	$opt_magic
+	  ? runtime("SvSetMagicSV($dst->{sv}, sv);")
+	  : runtime("SvSetSV($dst->{sv}, sv);");
         $dst->invalidate;
       }
     }
@@ -2076,8 +2327,10 @@ sub pp_sassign {
       runtime("dst = POPs; src = TOPs;");
     }
     runtime(
-      "MAYBE_TAINT_SASSIGN_SRC(src);", "SvSetSV(dst, src);",
-      "SvSETMAGIC(dst);",              "SETs(dst);"
+      $opt_taint ? "MAYBE_TAINT_SASSIGN_SRC(src);" : "",
+      "SvSetSV(dst, src);",
+      $opt_magic ? "SvSETMAGIC(dst);" : "",
+      "SETs(dst);"
     );
   }
   return $op->next;
@@ -2089,7 +2342,7 @@ sub pp_preinc {
   if ( @stack >= 1 ) {
     my $obj  = $stack[-1];
     my $type = $obj->{type};
-    if ( $type == T_INT || $type == T_DOUBLE ) {
+    if ( $type == T_INT || $type == T_NUM ) {
       $obj->set_int( $obj->as_int . " + 1" );
     }
     else {
@@ -2137,13 +2390,27 @@ sub pp_entersub {
   write_back_lexicals( REGISTER | TEMPORARY );
   write_back_stack();
   my $sym = doop($op);
-  runtime("while (PL_op != ($sym)->op_next && PL_op != (OP*)0 ){",
+  $op->next->save if ${$op->next};
+  $op->first->save if ${$op->first} and $op->first->type;
+  # sometimes needs an additional check
+  my $ck_next = ${$op->next} ? "PL_op != ($sym)->op_next && " : "";
+  runtime("while ($ck_next PL_op != (OP*)0 ){",
           "\tPL_op = (*PL_op->op_ppaddr)(aTHX);",
           "\tSPAGAIN;}");
   $know_op = 0;
   invalidate_lexicals( REGISTER | TEMPORARY );
+  # B::C::check_entersub($op);
   return $op->next;
 }
+
+# coverage: 16,26,35,51,72,73
+sub pp_bless {
+  my $op = shift;
+  $curcop->write_back if $curcop;
+  # B::C::check_bless($op);
+  default_pp($op);
+}
+
 
 # coverage: ny
 sub pp_formline {
@@ -2271,13 +2538,15 @@ sub pp_require {
   write_back_lexicals( REGISTER | TEMPORARY );
   write_back_stack();
   my $sym = doop($op);
-  runtime("while (PL_op != ($sym)->op_next && PL_op != (OP*)0 ) {",
-          #(test 28).
+  # sometimes needs an additional check
+  my $ck_next = ${$op->next} ? "PL_op != ($sym)->op_next && " : "";
+  runtime("while ($ck_next PL_op != (OP*)0 ) {", #(test 28).
           "  PL_op = (*PL_op->op_ppaddr)(aTHX);",
           "  SPAGAIN;",
           "}");
   $know_op = 1;
   invalidate_lexicals( REGISTER | TEMPORARY );
+  # B::C::check_require($op); # mark package
   return $op->next;
 }
 
@@ -2289,19 +2558,16 @@ sub pp_entertry {
   write_back_stack();
   my $sym = doop($op);
   $entertry_defined = 1;
-  if (!$op->can("other")) { # since 5.11.4
-    debug "ENTERTRY label \$op->next (no other)\n";
-    my $next = $op->next;
-    my $l = label( $next );
-    runtime(sprintf( "PP_ENTERTRY(%s);", $l));
-    push_label ($next, $next->isa('B::COP') ? 'nextstate' : 'leavetry');
+  my $next = $op->next; # broken in 5.12, fixed in B::C by upgrading BASEOP
+  # jump past leavetry
+  $next = $op->other->next if $op->can("other"); # before 5.11.4 and after 5.13.8
+  my $l = label( $next );
+  debug "ENTERTRY label=$l (".ref($op).") ->".$next->name."(".ref($next).")\n";
+  runtime(sprintf( "PP_ENTERTRY(%s);", $l));
+  if ($next->isa('B::COP')) {
+    push_label($next, 'nextstate');
   } else {
-    debug "ENTERTRY label \$op->other->next\n";
-    runtime(sprintf( "PP_ENTERTRY(%s);",
-		     label( $op->other->next ) ) );
-    invalidate_lexicals( REGISTER | TEMPORARY );
-    push_label ($op->other->next, 'leavetry');
-    #write_label( $op->other->next );
+    push_label($op->other, 'leavetry') if $op->can("other");
   }
   invalidate_lexicals( REGISTER | TEMPORARY );
   return $op->next;
@@ -2313,6 +2579,7 @@ sub pp_leavetry {
   pop_label 'leavetry' if $labels->{'leavetry'}->[-1] and $labels->{'leavetry'}->[-1] == $op;
   default_pp($op);
   runtime("PP_LEAVETRY;");
+  write_label($op->next);
   return $op->next;
 }
 
@@ -2398,7 +2665,7 @@ sub pp_return {
 
 sub nyi {
   my $op = shift;
-  warn sprintf( "%s not yet implemented properly\n", $op->ppaddr );
+  warn sprintf( "Warning: %s not yet implemented properly\n", $op->ppaddr );
   return default_pp($op);
 }
 
@@ -2410,7 +2677,7 @@ sub pp_range {
     if ($strict) {
       error("context of range unknown at compile-time\n");
     } else {
-      warn("context of range unknown at compile-time\n");
+      warn("Warning: context of range unknown at compile-time\n");
       runtime('warn("context of range unknown at compile-time");');
     }
     return default_pp($op);
@@ -2437,7 +2704,7 @@ sub pp_flip {
     if ($strict) {
       error("context of flip unknown at compile-time\n");
     } else {
-      warn("context of flip unknown at compile-time\n");
+      warn("Warning: context of flip unknown at compile-time\n");
       runtime('warn("context of flip unknown at compile-time");');
     }
     return default_pp($op);
@@ -2591,7 +2858,7 @@ sub pp_redo {
   if ( $op->flags & OPf_SPECIAL ) {
     $cxix = dopoptoloop();
     if ( $cxix < 0 ) {
-      warn("Warning: \"redo\" used outside loop\n");
+      #warn("Warning: \"redo\" used outside loop\n");
       return default_pp($op); # no optimization
     }
   }
@@ -2629,11 +2896,11 @@ sub pp_last {
   if ( $op->flags & OPf_SPECIAL ) {
     $cxix = dopoptoloop();
     if ( $cxix < 0 ) {
-      warn("Warning: \"last\" used outside loop\n");
-      #return default_pp($op); # no optimization
+      #warn("Warning: \"last\" used outside loop\n");
+      return default_pp($op); # no optimization
     }
   }
-  else {
+  elsif (ref($op) eq 'B::PVOP') { # !OPf_STACKED
     my $label = $op->pv;
     if ($label) {
       $cxix = dopoptolabel( $label );
@@ -2646,7 +2913,6 @@ sub pp_last {
 	return $op->next;
       }
     }
-
     # Add support to leave non-loop blocks. label fixed with 1.11
     if ( CxTYPE_no_LOOP( $cxstack[$cxix] ) ) {
       if (!$cxstack[$cxix]->{'lastop'} or !$cxstack[$cxix]->{'label'}) {
@@ -2767,7 +3033,7 @@ sub compile_bblock {
   $know_op = 0;
   do {
     $op = compile_op($op);
-    if ($] < 5.013 and ($slow_signals or ($$op and $async_signals{$op->name}))) {
+    if ($] < 5.013 and ($opt_slow_signals or ($$op and $async_signals{$op->name}))) {
       runtime("PERL_ASYNC_CHECK();");
     }
   } while ( defined($op) && $$op && !exists( $leaders->{$$op} ) );
@@ -2897,36 +3163,45 @@ sub cc_main {
     $inc_hv    = $inc_gv->HV->save('main::INC');
     $init->add( sprintf( "GvHV(%s) = s\\_%x;",
 			 $inc_gv->save('main::INC'), $inc_gv->HV ) );
-    local ($B::C::pv_copy_on_grow, $B::C::const_strings);
-    $B::C::pv_copy_on_grow = $B::C::const_strings = 1 if $B::C::ro_inc;
+    local ($B::C::const_strings);
+    $B::C::const_strings = 1 if $B::C::ro_inc;
     $inc_hv          = $inc_gv->HV->save('main::INC');
     $inc_av          = $inc_gv->AV->save('main::INC');
   }
   {
     # >=5.10 needs to defer nullifying of all vars in END, not only new ones.
-    local ($B::C::pv_copy_on_grow, $B::C::const_strings);
+    local ($B::C::const_strings);
     $B::C::in_endav = 1;
     $end_av  = end_av->save;
   }
   cc_recurse();
-  return if $errors;
+  return if $errors or $check;
 
   if ( !defined($module) ) {
-    my $amagic_generate = amagic_generation;
     # XXX TODO push BEGIN/END blocks to modules code.
     $init->add(
       sprintf( "PL_main_root = s\\_%x;", ${ main_root() } ),
       "PL_main_start = $start;",
       "PL_curpad = AvARRAY($curpad_sym);",
-      "PL_comppad = $curpad_sym;",
-      "av_store(CvPADLIST(PL_main_cv), 0, SvREFCNT_inc($curpad_nam));",
-      "av_store(CvPADLIST(PL_main_cv), 1, SvREFCNT_inc($curpad_sym));",
+      "PL_comppad = $curpad_sym;");
+    if ($] < 5.017005) {
+      $init->add(
+	"av_store((AV*)CvPADLIST(PL_main_cv), 0, SvREFCNT_inc($curpad_nam)); /* namepad */",
+	"av_store((AV*)CvPADLIST(PL_main_cv), 1, SvREFCNT_inc($curpad_sym)); /* curpad */");
+    } else {
+      $init->add(
+	"PadlistARRAY(CvPADLIST(PL_main_cv))[0] = (PAD*)SvREFCNT_inc($curpad_nam); /* namepad */",
+	"PadlistARRAY(CvPADLIST(PL_main_cv))[1] = (PAD*)SvREFCNT_inc($curpad_sym); /* curpad */");
+    }
+    $init->add(
       "GvHV(PL_incgv) = $inc_hv;",
       "GvAV(PL_incgv) = $inc_av;",
-      "PL_amagic_generation = $amagic_generate;",
       "PL_initav = (AV*)$init_av;",
-      "PL_endav = (AV*)$end_av;"
-    );
+      "PL_endav = (AV*)$end_av;");
+    if ($] < 5.017) {
+      my $amagic_generate = B::amagic_generation;
+      $init->add("PL_amagic_generation = $amagic_generate;");
+    };
   }
 
   seek( STDOUT, 0, 0 );   #prevent print statements from BEGIN{} into the output
@@ -2970,7 +3245,10 @@ EOT
 }
 
 sub compile_stats {
-    return "Total number of OPs processed: $op_count\n";
+   my $s = "Total number of OPs processed: $op_count\n";
+   $s .= "Total number of unresolved symbols: $B::C::unresolved_count\n"
+     if $B::C::unresolved_count;
+   return $s;
 }
 
 # Accessible via use B::CC '-ftype-attr'; in user code, or -MB::CC=-O2 on the cmdline
@@ -2985,6 +3263,9 @@ sub import {
   }
   $B::C::fold     = 0 if $] >= 5.013009; # utf8::Cased tables
   $B::C::warnings = 0 if $] >= 5.013005; # Carp warnings categories and B
+  $opt_taint = 1;
+  $opt_magic = 1;      # only makes sense with -fno-magic
+  $opt_autovivify = 1; # only makes sense with -fno-autovivify
 OPTION:
   while ( $option = shift @options ) {
     if ( $option =~ /^-(.)(.*)/ ) {
@@ -3002,6 +3283,10 @@ OPTION:
     elsif ( $opt eq "o" ) {
       $arg ||= shift @options;
       open( STDOUT, ">$arg" ) or return "open '>$arg': $!\n";
+    }
+    elsif ( $opt eq "c" ) {
+      $check       = 1;
+      $B::C::check = 1;
     }
     elsif ( $opt eq "v" ) {
       $verbose       = 1;
@@ -3036,7 +3321,7 @@ OPTION:
 	  $c_optimise{$ref}++;
         }
         else {
-          warn qq(ignoring unknown optimisation option "$arg"\n);
+          warn qq(Warning: ignoring unknown optimisation "$arg"\n);
         }
       }
     }
@@ -3045,12 +3330,16 @@ OPTION:
       foreach my $ref ( values %optimise ) {
         $$ref = 0;
       }
+      $B::C::destruct = 0 unless $] < 5.008; # fast_destruct
       if ($arg >= 2) {
         $freetmps_each_loop = 1;
-        $B::C::destruct = 0 unless $] < 5.008; # fast_destruct
+        if (!$ITHREADS) {
+          #warn qq(Warning: ignoring -faelem with threaded perl\n);
+          $opt_aelem = 1; # unstable, test: 68 pp_padhv targ assert
+        }
       }
       if ( $arg >= 1 ) {
-        $type_attr = 1;
+        $opt_type_attr = 1;
         $freetmps_each_bblock = 1 unless $freetmps_each_loop;
       }
     }
@@ -3101,14 +3390,27 @@ OPTION:
         elsif ( $arg eq "t" ) {
           $debug{timings}++;
         }
+        elsif ( $arg eq "b" ) {
+          $debug{bblock}++;
+        }
         elsif ( $arg eq "F" and eval "require B::Flags;" ) {
           $debug{flags}++;
           $B::C::debug{flags}++;
         }
+	elsif ( exists $B::C::debug_map{$arg} ) {
+          $B::C::debug{ $B::C::debug_map{$arg} }++;
+	}
+	else {
+	  warn qq(Warning: ignoring unknown -D option "$arg"\n);
+	}
       }
     }
   }
   $strict++ if !$strict and $Config{ccflags} !~ m/-DDEBUGGING/;
+  if ($opt_omit_taint) {
+    $opt_taint = 0;
+    warn "Warning: -fomit_taint is deprecated. Use -fno-taint instead.\n";
+  }
 
   # rgs didn't want opcodes to be added to Opcode. So I had to add it to a
   # seperate Opcodes package.
@@ -3132,14 +3434,13 @@ OPTION:
 
   mark_skip('B::C', 'B::C::Flags', 'B::CC', 'B::Asmdata', 'B::FAKEOP',
 	    'B::Section', 'B::Pseudoreg', 'B::Shadow', 'O', 'Opcodes',
-	    'B::Stackobj', 'B::Bblock');
+	    'B::Stackobj', 'B::Stackobj::Bool', 'B::Stackobj::Padsv',
+            'B::Stackobj::Const', 'B::Stackobj::Aelem', 'B::Bblock');
   mark_skip('DB', 'Term::ReadLine') if defined &DB::DB;
 
   # Set some B::C optimizations.
   # optimize_ppaddr is not needed with B::CC as CC does it even better.
-  for (qw(optimize_warn_sv save_data_fh av_init save_sig destruct),
-       $PERL510 ? () : "pv_copy_on_grow")
-  {
+  for (qw(optimize_warn_sv save_data_fh av_init save_sig destruct const_strings)) {
     no strict 'refs';
     ${"B::C::$_"} = 1 unless $c_optimise{$_};
   }
@@ -3151,7 +3452,7 @@ OPTION:
     $B::C::av_init = 0 unless $c_optimise{av_init};
     $B::C::av_init2 = 1 unless $c_optimise{av_init2};
   }
-  init_type_attrs() if $type_attr; # but too late for -MB::CC=-O2 on import. attrs are checked before
+  init_type_attrs() if $opt_type_attr; # but too late for -MB::CC=-O2 on import. attrs are checked before
   @options;
 }
 
@@ -3178,11 +3479,12 @@ sub compile {
       my $warner = $SIG{__WARN__};
       save_sig($warner);
       fixup_ppaddr();
+      return if $check;
       output_boilerplate();
       print "\n";
       output_all( $init_name || "init_module" );
       output_runtime();
-      # output_main_rest();
+      output_main_rest();
     }
   }
   else {
@@ -3212,29 +3514,29 @@ help make use of this compiler.
 
 =head1 TYPES
 
-Implemented type classes are B<int> and B<double>.
-Planned is B<string> also.
-Implemented are only SCALAR types yet. 
-Typed arrays and hashes and perfect hashes need CORE and L<types> support first.
+Implemented type classes are B<int> and B<num>.
+Planned is B<str> also.
+Implemented are only SCALAR types yet.
+Typed arrays and hashes and perfect hashes need L<coretypes>, L<types> and
+proper C<const> support first.
 
 Deprecated are inferred types via the names of locals, with '_i', '_d' suffix
 and an optional 'r' suffix for register allocation.
 
   C<my ($i_i, $j_ir, $num_d);>
 
-Planned type attributes are B<int>, B<double>, B<string>,
-B<unsigned>, B<ro> / B<const>.
+Planned type attributes are B<int>, B<num>, B<str>, B<unsigned>, B<ro> / B<const>.
 
-The attributes are perl attributes, and int|double|string are either
+The attributes are perl attributes, and C<int|num|str> are either
 compiler classes or hints for more allowed types.
 
-  C<my int $i :double;>  declares a NV with SVf_IOK. Same as C<my $i:int:double;>
+  C<my int $i :num;>  declares a NV with SVf_IOK. Same as C<my $i:int:double;>
   C<my int $i;>          declares an IV. Same as C<my $i:int;>
-  C<my int $i :string;>  declares a PVIV. Same as C<my $i:int:string;>
+  C<my int $i :str;>  declares a PVIV. Same as C<my $i:int:string;>
 
   C<my int @array :unsigned = (0..4);> will be used as c var in faster arithmetic and cmp.
                                        With :const or :ro even more.
-  C<my string %hash :const
+  C<my str %hash :const
     = (foo => 'foo', bar => 'bar');> declare string values,
                                      generate as read-only perfect hash.
 
@@ -3254,7 +3556,7 @@ STATUS
 OK (classes only):
 
   my int $i;
-  my double $d;
+  my num $d;
 
 NOT YET OK (attributes):
 
@@ -3275,27 +3577,26 @@ functions, even if they are used at compile time only.
 
 Using attributes adds an import block to your code.
 
-Only B<our> variable attributes are checked at compile-time,
+Up until 5.20 only B<our> variable attributes are checked at compile-time,
 B<my> variables attributes at run-time only, which is too late for the compiler.
-But only my variables can be typed, our not as they are typed automatically with
-the defined package.
-Perl attributes need to be fixed for types hints.
+Perl attributes need to be fixed for types hints by adding C<CHECK_SCALAR_ATTRIBUTES>.
 
 FUTURE
 
 We should be able to support types on ARRAY and HASH.
+For arrays also sizes to omit bounds-checking.
 
   my int @array; # array of ints, faster magic-less access esp. in inlined arithmetic and cmp.
-  my string @array : readonly = qw(foo bar); # compile-time error on write. no lexical write_back
+  my str @array : const = qw(foo bar);   # compile-time error on write. no lexical write_back
 
-  my int $hash = {"1" => 1, "2" => 2}; # int values, type-checked on write my
-  string %hash1 : readonly = (foo => 'bar');# string keys only => maybe gperf
-                                            # compile-time error on write
+  my int $hash = {"1" => 1, "2" => 2};   # int values, type-checked on write my
+  str %hash1 : const = (foo => 'bar');   # string keys only => maybe gperf
+                                         # compile-time error on write
 
-Typed hash keys are always strings, values are typed.
+Typed hash keys are always strings, as array keys are always int. Only the values are typed.
 
 We should be also able to add type attributes for functions and methods,
-i.e. for argument and return types. See L<types> and 
+i.e. for argument and return types. See L<types> and
 L<http://blogs.perl.org/users/rurban/2011/02/use-types.html>
 
 =head1 BUGS
@@ -3358,15 +3659,16 @@ In doubt B::CC code behaves more like with C<use integer>.
 
 Features of standard perl such as C<$[> which have been deprecated
 in standard perl since Perl5 was released have not been implemented
-in the compiler.
+in the optimizing compiler.
 
 =head1 AUTHORS
 
 Malcolm Beattie C<MICB at cpan.org> I<(1996-1998, retired)>,
 Vishal Bhatia <vishal at deja.com> I(1999),
-Gurusamy Sarathy <gsar@cpan.org> I(1998-2001),
-Reini Urban C<perl-compiler@googlegroups.com> I(2008-),
+Gurusamy Sarathy <gsar at cpan.org> I(1998-2001),
+Reini Urban C<perl-compiler at googlegroups.com> I(2008-now),
 Heinz Knutzen C<heinz.knutzen at gmx.de> I(2010)
+Will Braswell C<wbraswell at hush.com> I(2012)
 
 =cut
 

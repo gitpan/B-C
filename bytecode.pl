@@ -42,7 +42,7 @@ my $c_header = <<"EOT";
 /* -*- buffer-read-only: t -*-
  *
  *      Copyright (c) 1996-1999 Malcolm Beattie
- *      Copyright (c) 2008,2009,2010,2011 Reini Urban
+ *      Copyright (c) 2008,2009,2010,2011,2012 Reini Urban
  *
  *      You may distribute under the terms of either the GNU General Public
  *      License or the Artistic License, as specified in the README file.
@@ -367,7 +367,7 @@ for (@data) {
 	# perl version 5.010000 => 10.000, 5.009003 => 9.003
 	# Have to round the float: 5.010 - 5 = 0.00999999999999979
 	my $pver = 0.0+(substr($],2,3).".".substr($],5));
-	if ($ver =~ /8(\-)?/) {
+	if ($ver =~ /^<?8\-?/) {
 	    $ver =~ s/8/8.001/; # as convenience for a shorter table.
 	}
 	# Add these misses to ASMDATA. TODO: To BYTERUN maybe with a translator, as the
@@ -383,7 +383,8 @@ for (@data) {
 	    $unsupp++ if $pver < $ver; # ver 10: skip if pvar lower than 10;
 	}
     }
-    if (!$unsupp or $] >= 5.007) {
+    # warn "unsupported $idx\t$ver\t$insn\n" if $unsupp;
+    if (!$unsupp or ($] >= 5.007 and $insn !~ /padl|xcv_name_hek/)) {
 	$insn_name[$insn_num] = $insn;
 	push @insndata, [$insn_num, $unsupp, $insn, $lvalue, $rvalcast, $argtype, $flags];
 	# Find the next unused instruction number
@@ -462,13 +463,13 @@ EOT
 	} else {
 	    printf BYTERUN_C "\t\tBGET_%s(arg);\n", $fundtype;
 	}
-	printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"(insn %%3d) $insn $argtype:%s\\n\", insn, $printarg%s));\n",
+	printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"(insn %%3d) $insn $argtype:%s\\n\",\n\t\t\t\tinsn, $printarg%s));\n",
 	  $argfmt, ($argtype =~ /index$/ ? ', (int)ix' : '');
 	if ($insn eq 'newopx' or $insn eq 'newop') {
-	    print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   [%s]\\n\", PL_op_name[arg>>7]));\n";
+	    print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   [%s %d]\\n\", PL_op_name[arg>>7], bstate->bs_ix));\n";
 	}
 	if ($fundtype eq 'PV') {
-	    print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BGET_PV(arg) => \\\"%s\\\"\\n\", bstate->bs_pv.xpv_pv));\n";
+	    print BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BGET_PV(arg) => \\\"%s\\\"\\n\", bstate->bs_pv.pv));\n";
 	}
     } else {
 	if ($unsupp and $holes{$insn_num}) {
@@ -481,10 +482,15 @@ EOT
 	# Special setter method named after insn
 	print BYTERUN_C "\t\tif (force)\n\t" if $unsupp;
 	print BYTERUN_C "\t\tBSET_$insn($lvalue$optarg);\n";
-	my $optargcast = $optarg eq ", arg" ? ", $printarg" : '';
+	my $optargcast = $optarg eq ", arg" ? ",\n\t\t\t\t$printarg" : '';
+	$optargcast .= ($insn =~ /x$/ and $optarg eq ", arg" ? ", bstate->bs_ix-1" : '');
 	printf BYTERUN_C "\t\tDEBUG_v(Perl_deb(aTHX_ \"\t   BSET_$insn($lvalue%s)\\n\"$optargcast));\n",
 	  $optarg eq ", arg"
-	    ? ($fundtype =~ /(strconst|pvcontents)/ ? ', \"%s\"' : ", ".($argtype =~ /index$/ ? '0x%'.$UVxf : $argfmt))
+	    ? ($fundtype =~ /(strconst|pvcontents)/
+	       ? ($insn =~ /x$/ ? ', \"%s\" ix:%d' : ', \"%s\"')
+	       : (", " .($argtype =~ /index$/ ? '0x%'.$UVxf : $argfmt)
+	               .($insn =~ /x$/ ? ' ix:%d' : ''))
+	    )
 	      : '';
     } elsif ($flags =~ /s/) {
 	# Store instructions to bytecode_obj_list[arg]. "lvalue" field is rvalue.
@@ -512,8 +518,8 @@ print BYTERUN_C <<'EOT';
 	  /* debop is not public in 5.10.0 on strict platforms like mingw and MSVC, cygwin is fine. */
 #if defined(DEBUG_t_TEST_) && !defined(_MSC_VER) && !defined(__MINGW32__) && !defined(AIX)
           if (PL_op && DEBUG_t_TEST_)
-              /* XXX GV without flags will assert. We need to skip newopx ops until op_flags are set */
-              if ((insn != INSN_NEWOPX) && (insn != INSN_NEWOP)) debop(PL_op);
+              /* GV without the cGVOPo_gv initialized asserts. We need to skip newopx */
+              if ((insn != INSN_NEWOPX) && (insn != INSN_NEWOP) && (PL_op->op_type != OP_GV)) debop(PL_op);
 #endif
         }
     }
@@ -600,13 +606,11 @@ struct byteloader_fdata {
     int	 idx;
 };
 
-#if PERL_VERSION > 8
 struct byteloader_xpv {
-    char *xpv_pv;
-    int   xpv_cur;
-    int	  xpv_len;
+    char *pv;
+    int   cur;
+    int	  len;
 };
-#endif
 
 struct byteloader_header {
     char 	archname[80];
@@ -625,11 +629,7 @@ struct byteloader_state {
     void			**bs_obj_list;
     int				bs_obj_list_fill;
     int				bs_ix;
-#if PERL_VERSION > 8
     struct byteloader_xpv	bs_pv;
-#else
-    XPV				bs_pv;
-#endif
     int				bs_iv_overflows;
 };
 
@@ -846,7 +846,7 @@ __END__
 #   requires PERL_VERSION>==10 only.
 # lvalue is the (statemachine) value to read or write.
 # argtype specifies the reader or writer method.
-# flags x specifies a special reader method named by BSET_$insn in bytecode.h
+# flags x specifies a special writer method BSET_$insn in bytecode.h
 # flags s store instructions to bytecode_obj_list[arg]. "lvalue" field is rvalue.
 # flags \d+ specifies the maximal length.
 #
@@ -860,7 +860,7 @@ __END__
 2  0 	ldop		PL_op				opindex
 3  0 	stsv		bstate->bs_sv			U32		s
 4  0 	stop		PL_op				U32		s
-5  6.001 stpv		bstate->bs_pv.xpv_pv		U32		x
+5  6.001 stpv		bstate->bs_pv.pv		U32		x
 6  0 	ldspecsv	bstate->bs_sv			U8		x
 7  8 	ldspecsvx	bstate->bs_sv			U8		x
 8  0 	newsv		bstate->bs_sv			U8		x
@@ -870,7 +870,7 @@ __END__
 12 8	newopx		PL_op				U16		x
 13 0 	newopn		PL_op				U8		x
 14 0 	newpv		none				U32/PV
-15 0 	pv_cur		bstate->bs_pv.xpv_cur		STRLEN
+15 0 	pv_cur		bstate->bs_pv.cur		STRLEN
 16 0 	pv_free		bstate->bs_pv			none		x
 17 0 	sv_upgrade	bstate->bs_sv			U8		x
 18 0 	sv_refcnt	SvREFCNT(bstate->bs_sv)		U32
@@ -889,8 +889,8 @@ __END__
 29 0 	xlv_targ	LvTARG(bstate->bs_sv)		svindex
 30 0 	xlv_type	LvTYPE(bstate->bs_sv)		char
 31 0 	xbm_useful	BmUSEFUL(bstate->bs_sv)		I32
-32 0 	xbm_previous	BmPREVIOUS(bstate->bs_sv)	U16
-33 0 	xbm_rare	BmRARE(bstate->bs_sv)		U8
+32 <19 	xbm_previous	BmPREVIOUS(bstate->bs_sv)	U16
+33 <19 	xbm_rare	BmRARE(bstate->bs_sv)		U8
 34 0 	xfm_lines	FmLINES(bstate->bs_sv)		IV
 #35 0 	comment		arg				comment_t
 36 0 	xio_lines	IoLINES(bstate->bs_sv)		IV
@@ -911,7 +911,7 @@ __END__
 50 13	xcv_stash	bstate->bs_sv			svindex		x
 51 0 	xcv_start	CvSTART(bstate->bs_sv)		opindex
 52 0 	xcv_root	CvROOT(bstate->bs_sv)		opindex
-53 0 	xcv_gv		bstate->bs_sv			svindex		x
+53 0	xcv_gv		bstate->bs_sv			svindex		x
 #  <8   xcv_filegv	*(SV**)&CvFILEGV(bstate->bs_sv)	svindex
 54 0 	xcv_file	CvFILE(bstate->bs_sv)		pvindex
 55 0 	xcv_depth	CvDEPTH(bstate->bs_sv)		long
@@ -1023,11 +1023,10 @@ __END__
 147 8 	comppad_name	*(SV**)&PL_comppad_name		svindex
 148 8 	xgv_stash	*(SV**)&GvSTASH(bstate->bs_sv)	svindex
 149 8 	signal		bstate->bs_sv			strconst	24x
-# formfeed is deprecated
-150 8 	formfeed	PL_formfeed			svindex
-151 9 	op_latefree	PL_op->op_latefree		U8
-152 9 	op_latefreed	PL_op->op_latefreed		U8
-153 9 	op_attached	PL_op->op_attached		U8
+150 8-17 formfeed	PL_formfeed			svindex
+151 9-17 op_latefree	PL_op->op_latefree		U8
+152 9-17 op_latefreed	PL_op->op_latefreed		U8
+153 9-17 op_attached	PL_op->op_attached		U8
 # 5.10.0 misses the RX_EXTFLAGS macro
 154 10-10.5 op_reflags  PM_GETRE(cPMOP)->extflags	U32
 154 11  op_reflags  	RX_EXTFLAGS(PM_GETRE(cPMOP))	U32
@@ -1036,4 +1035,12 @@ __END__
 157 8	gv_fetchpvn_flags bstate->bs_sv			U32		x
 # restore dup to stdio handles 0-2
 158 0 	xio_ifp		bstate->bs_sv	  		char		x
-159 10 	xpvshared	bstate->bs_sv			none		x
+159 10	xpvshared	bstate->bs_sv			none		x
+160 18	newpadlx	bstate->bs_sv			U8		x
+161 18	padl_name	bstate->bs_sv			svindex		x
+162 18	padl_sym	bstate->bs_sv			svindex		x
+163 18	xcv_name_hek	bstate->bs_sv			pvindex		x
+164 18	op_slabbed	PL_op->op_slabbed		U8
+165 18	op_savefree	PL_op->op_savefree		U8
+166 18	op_static	PL_op->op_static		U8
+167 19.003 op_folded	PL_op->op_folded		U8

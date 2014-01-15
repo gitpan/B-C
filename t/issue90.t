@@ -6,17 +6,27 @@ BEGIN {
   unshift @INC, 't';
   require "test.pl";
 }
-use Test::More tests => 9;
+use Test::More tests => 16;
+use B::C ();
+use Config;
+
 my $i=0;
 sub test3 {
   my $name = shift;
   my $script = shift;
   my $cmt = join('',@_);
-  my $todo;
-  $todo = 'TODO %+ setting regdata magic crashes' if $name eq 'ccode90i_c';
-  plctestok($i*3+1, $name, $script, $todo);
-  ctestok($i*3+2, "C", $name, $script, "C $cmt");
-  ctestok($i*3+3, "CC", $name, $script, "TODO CC $cmt");
+  my ($todobc,$todocc) = ("","");
+  $todobc = 'TODO ' if $name eq 'ccode90i_c' or ($] >= 5.018 and $Config{'useithreads'});
+  if ($name eq 'ccode90i_c' and ($B::C::VERSION lt '1.42_61' or $] >= 5.018)) {
+    $todocc = 'TODO '; #3 CC %+ includes Tie::Hash::NamedCapture
+  } elsif ($name eq 'ccode90i_ca' and $] >= 5.010) {
+    $todocc = 'TODO '; #6 CC @+
+  } elsif ($name eq 'ccode90i_er' and $] >= 5.010 and $Config{'useithreads'}) {
+    $todocc = 'TODO '; #12 CC Errno loaded automagically
+  }
+  plctestok($i*3+1, $name, $script, $todobc." BC ".$cmt);
+  ctestok($i*3+2, "C,-O3", $name, $script, "C $cmt");
+  ctestok($i*3+3, "CC", $name, $script, $todocc."CC $cmt");
   $i++;
 }
 
@@ -30,8 +40,11 @@ print q(o) if $s eq 'string test';
 'test string' =~ /(?<first>\w+) (?<second>\w+)/;
 print q(k) if $+{first} eq 'test';
 EOF
-
 }
+
+test3('ccode90i_ca', <<'EOF', '@+');
+"abc" =~ /(.)./; print "ok" if "21" eq join"",@+;
+EOF
 
 test3('ccode90i_es', <<'EOF', '%! magic');
 my %errs = %!; # t/op/magic.t Errno compiled in
@@ -39,7 +52,19 @@ print q(ok) if defined ${"!"}{ENOENT};
 EOF
 
 # this fails so far, %{"!"} is not detected at compile-time. requires -uErrno
-test3('ccode90i_er', <<'EOF', 'TODO may require -uErrno');
+test3('ccode90i_er', <<'EOF', 'Errno loaded automagically');
 my %errs = %{"!"}; # t/op/magic.t Errno to be loaded at run-time
 print q(ok) if defined ${"!"}{ENOENT};
+EOF
+
+test3('ccode90i_ep', <<'EOF', '%! pure IV');
+print FH "foo"; print "ok" if $! == 9;
+EOF
+
+ctestok(16, 'C,-O3', 'ccode90i_ce', <<'EOF', 'TODO C more @+');
+my $content = "ok\n";
+while ( $content =~ m{\w}g ) {
+    $_ .= "$-[0]$+[0]";
+}
+print "ok" if $_ eq "0112";
 EOF

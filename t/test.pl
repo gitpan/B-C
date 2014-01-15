@@ -2,6 +2,7 @@
 # t/test.pl - from CORE
 
 use Test::More;
+use File::Spec;
 
 sub _where {
     my @caller = caller($Level);
@@ -385,6 +386,10 @@ sub run_cmd {
     return ($result, $out, $err);
 }
 
+sub Mblib {
+   $^O eq 'MSWin32' ? '-Iblib\arch -Iblib\lib' : "-Iblib/arch -Iblib/lib";
+}
+
 sub tests {
     my $in = shift || "t/TESTS";
     $in = "TESTS" unless -f $in;
@@ -405,14 +410,6 @@ sub run_cc_test {
     my ($out,$result,$stderr) = ('');
     my $fnbackend = lc($backend); #C,-O2
     ($fnbackend,$opt) = $fnbackend =~ /^(cc?)(,-o.)?/;
-#    if ($cnt == 28 and $backend eq 'C,-O3') {
-#	print "ok $cnt # skip $backend SIGSEGV or hangs\n";
-#	return 0;
-#    }
-#    if ($todo and $cnt =~ /^(103)$/ and $] eq '5.010001') {
-#	print "ok $cnt # skip $backend hangs\n";
-#	return 0;
-#    }
     $opt =~ s/,-/_/ if $opt;
     $opt = '' unless $opt;
     use Config;
@@ -421,16 +418,18 @@ sub run_cc_test {
     my $cfile = $fnbackend."code".$cnt.$opt.".c";
     my @obj;
     @obj = ($fnbackend."code".$cnt.$opt.".obj",
-               $fnbackend."code".$cnt.$opt.".ilk",
-               $fnbackend."code".$cnt.$opt.".pdb")
+            $fnbackend."code".$cnt.$opt.".ilk",
+            $fnbackend."code".$cnt.$opt.".pdb")
       if $Config{cc} =~ /^cl/i; # MSVC uses a lot of intermediate files
     my $exe = $fnbackend."code".$cnt.$opt.$Config{exe_ext};
     unlink ($test, $cfile, $exe, @obj);
     open T, ">", $test; print T $script; close T;
-    my $Mblib = $] >= 5.009005 ? "-Mblib" : ""; # test also the CORE B in older perls
+    # Being able to test also the CORE B in older perls
+    my $Mblib = $] >= 5.009005 ? Mblib() : "";
+    my $useshrplib = $Config{useshrplib} eq 'true';
     unless ($Mblib) {           # check for -Mblib from the testsuite
         if (grep { m{blib(/|\\)arch$} } @INC) {
-            $Mblib = "-Iblib/arch -Iblib/lib";  # forced -Mblib via cmdline without
+            $Mblib = Mblib();  # forced -Mblib via cmdline without
             					# printing to stderr
             $backend = "-qq,$backend,-q" if !$ENV{TEST_VERBOSE} and $] > 5.007;
         }
@@ -451,31 +450,43 @@ sub run_cc_test {
 	$command .= " -DHAVE_INDEPENDENT_COMALLOC "
 	  if $B::C::Flags::have_independent_comalloc;
 	$command .= " -o $exe $cfile ".$B::C::Flags::extra_cflags . " ";
-	my $coredir = $ENV{PERL_SRC} || "$Config{installarchlib}/CORE";
-	my $libdir  = "$Config{prefix}/lib";
-	if ( -e "$coredir/$Config{libperl}" and $Config{libperl} !~ /\.(dll|so)$/ ) {
-	    $command .= ExtUtils::Embed::ldopts('-std');
-	} elsif ( $Config{useshrplib} and -e "$libdir/$Config{libperl}" ) {
-	    # debian: /usr/lib/libperl.so.5.10.1 and broken ExtUtils::Embed::ldopts
-	    my $linkargs = ExtUtils::Embed::ldopts('-std');
-	    $linkargs =~ s|-lperl |$libdir/$Config{libperl} |;
-            $linkargs =~ s/-fstack-protector//
-              if $command =~ /-fstack-protector/ and $linkargs =~ /-fstack-protector/;
+        if ($Config{cc} eq 'cl') {
+            if ($^O eq 'MSWin32' and $Config{ccversion} eq '12.0.8804' and $Config{cc} eq 'cl') {
+                $command =~ s/ -opt:ref,icf//;
+            }
+            my $obj = $obj[0];
+            $command =~ s/ \Q-o $exe\E / -c -Fo$obj /;
+            my $cmdline = "$Config{cc} $command";
+            diag ($cmdline) if $ENV{TEST_VERBOSE} and $ENV{TEST_VERBOSE} == 2;
+            run_cmd($cmdline, 20);
+            $command = '';
+        }
+	my $coredir = $ENV{PERL_SRC} || File::Spec->catdir($Config{installarchlib}, "CORE");
+	my $libdir  = File::Spec->catdir($Config{prefix}, "lib");
+        my $so = $Config{so};
+        my $linkargs = ExtUtils::Embed::ldopts('-std');
+        # At least cygwin gcc-4.3 crashes with 2x -fstack-protector
+        $linkargs =~ s/-fstack-protector\b//
+          if $command =~ /-fstack-protector\b/ and $linkargs =~ /-fstack-protector\b/;
+	if ( -e "$coredir/$Config{libperl}" and $Config{libperl} !~ /\.$so$/) {
+	    $command .= $linkargs;
+	} elsif ( $useshrplib and (-e "$libdir/$Config{libperl}" or -e "/usr/lib/$Config{libperl}")) {
+            # debian: /usr/lib/libperl.so.5.10.1 and broken ExtUtils::Embed::ldopts
+            if ($Config{libperl} =~ /\.$so$/) {
+                my $libperl = File::Spec->catfile($coredir, $Config{libperl});
+                $linkargs =~ s|-lperl |$libperl |; # link directly
+            }
 	    $command .= $linkargs;
 	} else {
-	    my $linkargs = ExtUtils::Embed::ldopts('-std');
-            # cygwin gcc-4.3 crashes with -fstack-protector 2x
-            $linkargs =~ s/-fstack-protector//
-              if $command =~ /-fstack-protector/ and $linkargs =~ /-fstack-protector/;
 	    $command .= $linkargs;
 	    $command .= " -lperl" if $command !~ /(-lperl|CORE\/libperl5)/ and $^O ne 'MSWin32';
 	}
 	$command .= $B::C::Flags::extra_libs;
         my $NULL = $^O eq 'MSWin32' ? '' : '2>/dev/null';
-	if ($^O eq 'MSWin32' and $Config{ccversion} eq '12.0.8804' and $Config{cc} eq 'cl') {
-	    $command =~ s/ -opt:ref,icf//;
-	}
         my $cmdline = "$Config{cc} $command $NULL";
+        if ($Config{cc} eq 'cl') {
+            $cmdline = "$Config{ld} $linkargs -out:$exe $obj[0] $command";
+        }
 	diag ($cmdline) if $ENV{TEST_VERBOSE} and $ENV{TEST_VERBOSE} == 2;
         run_cmd($cmdline, 20);
         unless (-e $exe) {
@@ -546,7 +557,7 @@ sub run_c_tests {
     my @skip = @{$_[2]};
 
     use Config;
-    my $AUTHOR      = -d ".svn" or -d ".git";
+    my $AUTHOR     = (-d ".git" and !$ENV{NO_AUTHOR}) ? 1 : 0;
     my $keep_c      = 0;	  # set it to keep the pl, c and exe files
     my $keep_c_fail = 1;          # keep on failures
 
@@ -607,7 +618,7 @@ CCTESTS
             next;
         }
         # only once. skip subsequent tests 29 on MSVC. 7:30min!
-        if ($cnt == 29 and $Config{cc} =~ /^cl/i and $backend ne 'C') {
+        if ($cnt == 29 and !$AUTHOR) {
             $todo{$cnt} = $skip{$cnt} = 1;
         }
         if ($todo{$cnt} and $skip{$cnt} and
@@ -622,6 +633,9 @@ CCTESTS
         } else {
             my ($script, $expect) = split />>>+\n/;
 	    die "Invalid empty t/TESTS" if !$script or $expect eq '';
+            if ($cnt == 4 and $] >= 5.017005) {
+                $expect = 'zzz2y2y2';
+            }
             run_cc_test($cnt, $backend.($cnt == 46 ? ',-fstash' : ''),
 			$script, $expect, $keep_c, $keep_c_fail, $todo);
         }
@@ -647,13 +661,14 @@ sub plctest {
     # we don't want to change STDOUT/STDERR on STDOUT/STDERR tests, so no -qq
     my $nostdoutclobber = $base !~ /^ccode93i/;
     my $b = ($] > 5.008 and $nostdoutclobber) ? "-qq,Bytecode" : "Bytecode";
-    system "$runperl -Iblib/arch -Iblib/lib -MO=$b,-o$name.plc $base.pl";
+    my $Mblib = Mblib;
+    system "$runperl $Mblib -MO=$b,-o$name.plc $base.pl";
     # $out =~ s/^$base.pl syntax OK\n//m;
     unless (-e "$name.plc") {
         print "not ok $num #B::Bytecode failed\n";
         exit;
     }
-    my $out = qx($runperl -Mblib -MByteLoader $name.plc);
+    my $out = qx($runperl $Mblib -MByteLoader $name.plc);
     chomp $out;
     my $ok = $out =~ /$expected/;
     if ($todo and $todo =~ /TODO/) {
@@ -663,7 +678,7 @@ sub plctest {
 	    ok($ok);
 	}
     } else {
-	ok($ok, "Bytecode $base".($todo ? " $todo" : ''));
+	ok($ok, $todo ? "$todo " : '');
     }
     if ($ok) {
         unlink("$name.plc", "$base.pl");
@@ -687,14 +702,21 @@ sub ctest {
     my $runperl = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
     # we don't want to change STDOUT/STDERR on STDOUT/STDERR tests, so no -qq
     my $nostdoutclobber = $base !~ /^ccode93i/;
+    my $post = '';
     my $b = ($] > 5.008 and $nostdoutclobber) ? "-qq,$backend" : "$backend";
-    $b .= q(,-fno-fold,-fno-warnings) if $] >= 5.013005;
-    system "$runperl -Iblib/arch -Iblib/lib -MO=$b,-o$name.c $name.pl";
+    ($b, $post) = split(" ", $b);
+    $post = '' unless $post;
+    $b .= q(,-fno-fold,-fno-warnings) if $] >= 5.013005 and $b !~ /-(O3|ffold|fwarnings)/;
+    diag("$runperl ".Mblib." -MO=$b,-o$name.c $post $name.pl")
+      if $ENV{TEST_VERBOSE} and $ENV{TEST_VERBOSE} > 1;
+    system "$runperl ".Mblib." -MO=$b,-o$name.c $post $name.pl";
     unless (-e "$name.c") {
         print "not ok $num #B::$backend failed\n";
         exit;
     }
-    system "$runperl -Iblib/arch -Iblib/lib blib/script/cc_harness -q -o $name $name.c";
+    diag("$runperl ".Mblib." blib/script/cc_harness -q -o $name $name.c")
+      if $ENV{TEST_VERBOSE} and $ENV{TEST_VERBOSE} > 1;
+    system "$runperl ".Mblib." blib/script/cc_harness -q -o $name $name.c";
     my $exe = $name.$Config{exe_ext};
     unless (-e $exe) {
 	if ($todo and $todo =~ /TODO/) {
@@ -714,12 +736,12 @@ sub ctest {
     if (defined($out) and !$result) {
         chomp $out;
         $ok = $out =~ /$expected/;
-	diag($out);
+	diag($out) if $ENV{TEST_VERBOSE};
 	unless ($ok) { #crosscheck uncompiled
             my $out1 = `$runperl $name.pl`;
             unless ($out1 =~ /$expected/) {
                 ok(1, "skip also fails uncompiled $todo");
-                return;
+                return 1;
             }
         }
 	if ($todo and $todo =~ /TODO/) {
@@ -727,7 +749,7 @@ sub ctest {
           TODO: {
                 local $TODO = $todo;
                 ok ($out =~ /$expected/);
-		diag($out);
+		diag($out) if $ENV{TEST_VERBOSE};
             }
         } else {
             ok ($out =~ /$expected/, $todo);
@@ -744,7 +766,7 @@ sub ctest {
 	    my $out1 = `$runperl $name.pl`;
             unless ($out1 =~ /$expected/) {
                 ok(1, "skip also fails uncompiled");
-                return;
+                return $ok;
             }
 	    ok (undef, $todo);
 	}
@@ -753,6 +775,7 @@ sub ctest {
     if ($ok) {
         unlink($name, "$name.c", "$name.exe");
     }
+    $ok
 }
 
 sub ccompileok {
@@ -765,12 +788,13 @@ sub ccompileok {
 
     my $runperl = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
     my $b = $] > 5.008 ? "-qq,$backend" : "$backend";
-    system "$runperl -Iblib/arch -Iblib/lib -MO=$b,-o$name.c $name.pl";
+    my $Mblib = Mblib;
+    system "$runperl $Mblib -MO=$b,-o$name.c $name.pl";
     unless (-e "$name.c") {
         print "not ok 1 #B::$backend failed\n";
         exit;
     }
-    system "$runperl -Iblib/arch -Iblib/lib blib/script/cc_harness -q -o $name $name.c";
+    system "$runperl $Mblib blib/script/cc_harness -q -o $name $name.c";
     my $ok = -e $name or -e "$name.exe";
     if ($todo and $todo =~ /TODO/) {
       TODO: {
@@ -794,42 +818,51 @@ sub todo_tests_default {
 
     my @todo  = ();
     push @todo, (15)  if $] < 5.007;
+    # broken by fbb32b8bebe8ad C: revert *-,*+,*! fetch magic, assign all core GVs to their global symbols
+    # fixed by 1.42_70 82a4fb139f
+    # push @todo, (10)  if $ITHREADS;
+    push @todo, (42..43) if $] < 5.012;
     if ($what =~ /^c(|_o[1-4])$/) {
-        push @todo, (7)     if $] == 5.008005;
-        push @todo, (21)    if $] >= 5.012 and $] < 5.014;
-        push @todo, (15)    if $] > 5.010 and $ITHREADS;
-        push @todo, (27)    if $] >= 5.012 and $] < 5.014 and $ITHREADS and $DEBUGGING;
+        #push @todo, (7)     if $] == 5.008005;
+        #push @todo, (21)    if $] >= 5.012 and $] < 5.014;
+        #push @todo, (15)    if $] > 5.010 and $] < 5.016 and $ITHREADS;
+        #push @todo, (27)    if $] >= 5.012 and $] < 5.014 and $ITHREADS and $DEBUGGING;
 
 	# @ISA issue 64
         push @todo, (10,12,19,25,42,43,50)  if $what eq 'c_o4';
-        push @todo, (48)  if $] >= 5.008009 and $] < 5.010 and $what eq 'c_o4';
+        #push @todo, (48)  if $] >= 5.008009 and $] < 5.010 and $what eq 'c_o4';
 	# DynaLoader::dl_load_file()
-        push @todo, (15,27,29,41..45,49) if $] > 5.015 and $what eq 'c_o4';
+        #push @todo, (42..43) if $] > 5.015 and $what eq 'c_o4';
+        #push @todo, (15,42..45) if $] >= 5.016; #1.42_66
     } elsif ($what =~ /^cc/) {
 	# 8,11,14..16,18..19 fail on 5.00505 + 5.6, old core failures (max 20)
 	# on cygwin 29 passes
 	#15,21,27,30,41-45,50,103,105
-	push @todo, (21,30,46,50,103,105);
-	push @todo, (15)    if $] < 5.008008;
-	push @todo, (15)    if $] >= 5.012 and $] < 5.015 and $ITHREADS;
+        #15,46,50,103 fixed with 1.42_61
+	push @todo, (21,30,105);
 	push @todo, (104,105) if $] < 5.007; # leaveloop, no cxstack
 	push @todo, (3,7,15,41,44,45) if $] > 5.008 and $] <= 5.008005;
         push @todo, (42,43) if $] > 5.008 and $] <= 5.008005 and !$ITHREADS;
 
 	push @todo, (14)    if $] >= 5.012;
-	push @todo, (10,16) if $what eq 'cc_o2';
+	push @todo, (10,16,50) if $what eq 'cc_o2';
+	#push @todo, (29)    if $] >= 5.013 and $what eq 'cc_o2';
+	#push @todo, (43)     if $what eq 'cc_o2'; # -faelem
 	#push @todo, (103)   if $] > 5.007 and $] < 5.009 and $what eq 'cc_o1';
 	# only tested 5.8.4 and .5
-	push @todo, (29)    if $] < 5.008006 or ($] > 5.013 and $] < 5.015);
+	push @todo, (27)    if $] <= 5.008005;
+	push @todo, (49)    if $] >= 5.007 and $] < 5.008008;
+	push @todo, (29)    if $] < 5.008008;
 	push @todo, (14)    if $] >= 5.010 and $^O !~ /MSWin32|cygwin/i;
 	# solaris also. I suspected nvx<=>cop_seq_*
 	push @todo, (12)    if $^O eq 'MSWin32' and $Config{cc} =~ /^cl/i;
 	push @todo, (26)    if $what =~ /^cc_o[12]/;
 	push @todo, (27)    if $] > 5.008008 and $] < 5.009 and $what eq 'cc_o2';
-	push @todo, (27)    if $] <= 5.008008;
-	push @todo, (25)    if $] >= 5.011004 and $DEBUGGING and $ITHREADS;
-	push @todo, (3,4)   if $] >= 5.011004 and $ITHREADS;
+	#push @todo, (25)    if $] >= 5.011004 and $DEBUGGING and $ITHREADS;
+	#push @todo, (3,4)   if $] >= 5.011004 and $] < 5.016 and $ITHREADS;
 	#push @todo, (49)    if $] >= 5.013009 and !$ITHREADS;
+        #push @todo, (15,42..45,103) if $] >= 5.016;
+        push @todo, (103)   if ($] >= 5.012 and $] < 5.014 and !$ITHREADS);
     }
     push @todo, (48)   if $] > 5.007 and $] < 5.009 and $^O =~ /MSWin32|cygwin/i;
     return @todo;

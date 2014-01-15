@@ -1,8 +1,8 @@
 #! /usr/bin/env perl
 # better use testc.sh -O4 for debugging
 BEGIN {
-  unless (-d ".svn" or -d '.git') {
-    print "1..0 #SKIP Only if -d .svn|.git\n";
+  unless (-d '.git' and !$ENV{NO_AUTHOR}) {
+    print "1..0 #SKIP Only if -d .git\n";
     exit;
   }
   if ($ENV{PERL_CORE}){
@@ -15,7 +15,7 @@ BEGIN {
 }
 use strict;
 my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
-my $ITHREADS  = ($Config{useithreads});
+#my $ITHREADS  = ($Config{useithreads});
 
 prepare_c_tests();
 

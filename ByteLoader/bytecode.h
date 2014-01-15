@@ -23,9 +23,6 @@ static int bget_swab = 0;
 #include "ppport.h"
 #endif
 
-#ifndef GvCV_set
-#  define GvCV_set(gv,cv)   (GvCV(gv) = (cv))
-#endif
 #ifndef GvGP_set
 #  define GvGP_set(gv,gp)   (GvGP(gv) = (gp))
 #endif
@@ -128,14 +125,14 @@ static int bget_swab = 0;
 #define BGET_PV(arg)	STMT_START {					\
 	BGET_U32(arg);							\
 	if (arg) {							\
-	    New(666, bstate->bs_pv.xpv_pv, (U32)arg, char);		\
-	    bl_read(bstate->bs_fdata, bstate->bs_pv.xpv_pv, (U32)arg, 1); \
-	    bstate->bs_pv.xpv_len = (U32)arg;				\
-	    bstate->bs_pv.xpv_cur = (U32)arg - 1;			\
+            New(666, bstate->bs_pv.pv, (U32)arg, char);                 \
+	    bl_read(bstate->bs_fdata, bstate->bs_pv.pv, (U32)arg, 1);   \
+	    bstate->bs_pv.len = (U32)arg;				\
+	    bstate->bs_pv.cur = (U32)arg - 1;			        \
 	} else {							\
-	    bstate->bs_pv.xpv_pv = 0;					\
-	    bstate->bs_pv.xpv_len = 0;					\
-	    bstate->bs_pv.xpv_cur = 0;					\
+	    bstate->bs_pv.pv = 0;					\
+	    bstate->bs_pv.len = 0;					\
+	    bstate->bs_pv.cur = 0;					\
 	}								\
     } STMT_END
 
@@ -164,7 +161,7 @@ static int bget_swab = 0;
 	arg = (char *) ary;				\
     } while (0)
 
-#define BGET_pvcontents(arg)	arg = bstate->bs_pv.xpv_pv
+#define BGET_pvcontents(arg)	arg = bstate->bs_pv.pv
 /* read until \0. optionally limit the max stringsize for buffer overflow attempts */
 #define BGET_strconst(arg, maxsize) STMT_START {	\
 	char *end = NULL; 				\
@@ -237,7 +234,7 @@ static int bget_swab = 0;
     } STMT_END
 #define BSET_gv_fetchpvn_flags(sv, arg) STMT_START {	 \
         int flags = (arg & 0xff80) >> 7; int type = arg & 0x7f; \
-	sv = (SV*)gv_fetchpv(savepv(bstate->bs_pv.xpv_pv), flags, type); \
+	sv = (SV*)gv_fetchpv(savepv(bstate->bs_pv.pv), flags, type); \
 	BSET_OBJ_STOREX(sv);				 \
     } STMT_END
 
@@ -247,9 +244,29 @@ static int bget_swab = 0;
 	BSET_OBJ_STOREX(sv);			\
     } STMT_END
 
-#define BSET_sv_magic(sv, arg)	sv_magic(sv, Nullsv, arg, 0, 0)
+#ifdef PERL_MAGIC_TYPE_READONLY_ACCEPTABLE
+#define BSET_sv_magic(sv, arg)	 STMT_START {	  \
+      if (SvREADONLY(sv) && !PERL_MAGIC_TYPE_READONLY_ACCEPTABLE(arg)) { \
+        SvREADONLY_off(sv);                                       \
+        sv_magic(sv, Nullsv, arg, 0, 0);                          \
+        SvREADONLY_on(sv);                                        \
+      } else {                                                    \
+        sv_magic(sv, Nullsv, arg, 0, 0);                          \
+      }                                                           \
+    } STMT_END
+#else
+#define BSET_sv_magic(sv, arg)	 STMT_START {	  \
+      if (SvREADONLY(sv)) {			  \
+        SvREADONLY_off(sv);			  \
+        sv_magic(sv, Nullsv, arg, 0, 0);          \
+        SvREADONLY_on(sv);                        \
+      } else {                                    \
+        sv_magic(sv, Nullsv, arg, 0, 0);          \
+      }                                           \
+    } STMT_END
+#endif
 /* mg_name was previously called mg_pv. we keep the new name and the old index */
-#define BSET_mg_name(mg, arg)	mg->mg_ptr = arg; mg->mg_len = bstate->bs_pv.xpv_cur
+#define BSET_mg_name(mg, arg)	mg->mg_ptr = arg; mg->mg_len = bstate->bs_pv.cur
 #define BSET_mg_namex(mg, arg)			\
 	(mg->mg_ptr = (char*)SvREFCNT_inc((SV*)arg),	\
 	 mg->mg_len = HEf_SVKEY)
@@ -257,16 +274,16 @@ static int bget_swab = 0;
 #define BSET_sv_upgrade(sv, arg)	(void)SvUPGRADE(sv, arg)
 #define BSET_xrv(sv, arg) SvRV_set(sv, arg)
 #define BSET_xpv(sv)	do {	\
-	SvPV_set(sv, bstate->bs_pv.xpv_pv);	\
-	SvCUR_set(sv, bstate->bs_pv.xpv_cur);	\
-	SvLEN_set(sv, bstate->bs_pv.xpv_len);	\
+	SvPV_set(sv, bstate->bs_pv.pv);	\
+	SvCUR_set(sv, bstate->bs_pv.cur);	\
+	SvLEN_set(sv, bstate->bs_pv.len);	\
     } while (0)
 #if PERL_VERSION > 8
 #define BSET_xpvshared(sv)	do {					\
         U32 hash;							\
-        PERL_HASH(hash, bstate->bs_pv.xpv_pv, bstate->bs_pv.xpv_cur);	\
-        SvPV_set(sv, HEK_KEY(share_hek(bstate->bs_pv.xpv_pv,bstate->bs_pv.xpv_cur,hash))); \
-	SvCUR_set(sv, bstate->bs_pv.xpv_cur);				\
+        PERL_HASH(hash, bstate->bs_pv.pv, bstate->bs_pv.cur);	\
+        SvPV_set(sv, HEK_KEY(share_hek(bstate->bs_pv.pv,bstate->bs_pv.cur,hash))); \
+	SvCUR_set(sv, bstate->bs_pv.cur);				\
 	SvLEN_set(sv, 0);						\
     } while (0)
 #else
@@ -281,24 +298,41 @@ static int bget_swab = 0;
 
 #define BSET_av_push(sv, arg)	av_push((AV*)sv, arg)
 #define BSET_av_pushx(sv, arg)	(AvARRAY(sv)[++AvFILLp(sv)] = arg)
-#define BSET_hv_store(sv, arg)	\
-	hv_store((HV*)sv, bstate->bs_pv.xpv_pv, bstate->bs_pv.xpv_cur, arg, 0)
-#define BSET_pv_free(pv)	Safefree(pv.xpv_pv)
+#define BSET_hv_store(sv, arg)                                          \
+    STMT_START {                                                        \
+      if (SvREADONLY(sv)) {                                             \
+        SvREADONLY_off(sv);                                             \
+	hv_store((HV*)sv, bstate->bs_pv.pv, bstate->bs_pv.cur, arg, 0); \
+        SvREADONLY_on(sv);                                              \
+      } else {                                                          \
+        hv_store((HV*)sv, bstate->bs_pv.pv, bstate->bs_pv.cur, arg, 0); \
+      }                                                                 \
+    } STMT_END
+#define BSET_pv_free(sv)	Safefree(sv.pv)
 
-#if PERL_VERSION > 13 || defined(CvGV_set)
-#define BSET_xcv_gv(sv, arg)	((SvANY((CV*)bstate->bs_sv))->xcv_gv = (GV*)arg)
+/* ignore backref and refcount checks */
+#if PERL_VERSION > 16 && defined(CvGV_set)
+# define BSET_xcv_gv(sv, arg)	((SvANY((CV*)bstate->bs_sv))->xcv_gv_u.xcv_gv = (GV*)arg)
 #else
-#define BSET_xcv_gv(sv, arg)	(*(SV**)&CvGV(bstate->bs_sv) = arg)
+# if PERL_VERSION > 13
+#  define BSET_xcv_gv(sv, arg)	((SvANY((CV*)bstate->bs_sv))->xcv_gv = (GV*)arg)
+# else
+#  define BSET_xcv_gv(sv, arg)	(*(SV**)&CvGV(bstate->bs_sv) = arg)
+# endif
 #endif
 #if PERL_VERSION > 13 || defined(GvCV_set)
-#define BSET_gp_cv(sv, arg)	GvCV_set(bstate->bs_sv, (CV*)arg)
+# define BSET_gp_cv(sv, arg)	GvCV_set(bstate->bs_sv, (CV*)arg)
 #else
-#define BSET_gp_cv(sv, arg)	(*(SV**)&GvCV(bstate->bs_sv) = arg)
+# define BSET_gp_cv(sv, arg)	(*(SV**)&GvCV(bstate->bs_sv) = arg)
 #endif
 #if PERL_VERSION > 13 || defined(CvSTASH_set)
-#define BSET_xcv_stash(sv, arg)	(CvSTASH_set((CV*)bstate->bs_sv, (HV*)arg))
+# define BSET_xcv_stash(sv, arg)	(CvSTASH_set((CV*)bstate->bs_sv, (HV*)arg))
 #else
-#define BSET_xcv_stash(sv, arg)	(*(SV**)&CvSTASH(bstate->bs_sv) = arg)
+# define BSET_xcv_stash(sv, arg)	(*(SV**)&CvSTASH(bstate->bs_sv) = arg)
+#endif
+
+#ifndef GvCV_set
+#  define GvCV_set(gv,cv)   (GvCV(gv) = (cv))
 #endif
 
 #ifdef USE_ITHREADS
@@ -346,7 +380,7 @@ static int bget_swab = 0;
     STMT_START {                                \
         SV* repointer;                          \
 	REGEXP* rx = arg                                                \
-	    ? CALLREGCOMP(aTHX_ arg, arg + bstate->bs_pv.xpv_cur, cPMOPx(o)) \
+	    ? CALLREGCOMP(aTHX_ arg, arg + bstate->bs_pv.cur, cPMOPx(o)) \
 	    : Null(REGEXP*);                                            \
         if(av_len((AV*)PL_regex_pad[0]) > -1) {                         \
             repointer = av_pop((AV*)PL_regex_pad[0]);                   \
@@ -370,7 +404,7 @@ static int bget_swab = 0;
 #define BSET_pregcomp(o, arg) \
     STMT_START {                        \
 	(((PMOP*)o)->op_pmregexp = (arg \
-            ? CALLREGCOMP(aTHX_ arg, arg + bstate->bs_pv.xpv_cur, cPMOPx(o)) \
+            ? CALLREGCOMP(aTHX_ arg, arg + bstate->bs_pv.cur, cPMOPx(o)) \
             : Null(REGEXP*)));          \
     } STMT_END
 #endif
@@ -389,7 +423,7 @@ static int bget_swab = 0;
 #if PERL_VERSION < 8
 #define BSET_pregcomp(o, arg)	    \
     ((PMOP*)o)->op_pmregexp = arg   \
-        ? CALLREGCOMP(aTHX_ arg, arg + bstate->bs_pv.xpv_cur, ((PMOP*)o)) : 0
+        ? CALLREGCOMP(aTHX_ arg, arg + bstate->bs_pv.cur, ((PMOP*)o)) : 0
 #endif
 
 
@@ -404,7 +438,8 @@ static int bget_swab = 0;
 	    default:					\
 		sv = newSV(0);				\
 		SvUPGRADE(sv, (arg));			\
-	    }
+	    }                                           \
+	    SvREFCNT(sv) = 1
 #define BSET_newsvx(sv, arg) STMT_START {		\
 	    BSET_newsv(sv, arg & SVTYPEMASK);		\
 	    SvFLAGS(sv) = arg;				\
@@ -516,7 +551,12 @@ static int bget_swab = 0;
 
 #ifdef USE_ITHREADS
 #define BSET_cop_file(cop, arg)		CopFILE_set(cop,arg)
+#if PERL_VERSION == 16
+/* 3arg: 6379d4a9 Father Chrysostomos    2012-04-08 20:25:52 */
+#define BSET_cop_stashpv(cop, arg)	CopSTASHPV_set(cop,arg,strlen(arg))
+#else
 #define BSET_cop_stashpv(cop, arg)	CopSTASHPV_set(cop,arg)
+#endif
 /* only warn, not croak, because those are not really important. stash could be. */
 #define BSET_cop_filegv(cop, arg)	Perl_warn(aTHX_ "cop_filegv with ITHREADS not yet implemented")
 #define BSET_cop_stash(cop,arg)		Perl_warn(aTHX_ "cop_stash with ITHREADS not yet implemented")
@@ -567,7 +607,57 @@ static int bget_swab = 0;
 #define PL_HINTS_PRIVATE (PL_hints)
 #endif
 
-#if (PERL_VERSION < 8)
+#if (PERL_VERSION > 16)
+#define BSET_push_begin(ary,cv)				\
+	STMT_START {					\
+            I32 oldscope = PL_scopestack_ix;		\
+            ENTER;					\
+            SAVECOPFILE(&PL_compiling);			\
+            SAVECOPLINE(&PL_compiling);			\
+            if (!PL_beginav)				\
+                PL_beginav = newAV();			\
+            av_push(PL_beginav, (SV*)cv);		\
+            SvANY((CV*)cv)->xcv_gv_u.xcv_gv = 0; /* cv has been hijacked */\
+            call_list(oldscope, PL_beginav);		\
+            PL_curcop = &PL_compiling;			\
+            CopHINTS_set(&PL_compiling, (U8)PL_HINTS_PRIVATE);	\
+            LEAVE;					\
+	} STMT_END
+#else
+#if (PERL_VERSION >= 10)
+#define BSET_push_begin(ary,cv)				\
+	STMT_START {					\
+            I32 oldscope = PL_scopestack_ix;		\
+            ENTER;					\
+            SAVECOPFILE(&PL_compiling);			\
+            SAVECOPLINE(&PL_compiling);			\
+            if (!PL_beginav)				\
+                PL_beginav = newAV();			\
+            av_push(PL_beginav, (SV*)cv);		\
+            SvANY((CV*)cv)->xcv_gv = 0; /* cv has been hijacked */\
+            call_list(oldscope, PL_beginav);		\
+            PL_curcop = &PL_compiling;			\
+            CopHINTS_set(&PL_compiling, (U8)PL_HINTS_PRIVATE);	\
+            LEAVE;					\
+	} STMT_END
+#else
+#if (PERL_VERSION >= 8)
+#define BSET_push_begin(ary,cv)				\
+	STMT_START {					\
+            I32 oldscope = PL_scopestack_ix;		\
+            ENTER;					\
+            SAVECOPFILE(&PL_compiling);			\
+            SAVECOPLINE(&PL_compiling);			\
+            if (!PL_beginav)				\
+                PL_beginav = newAV();			\
+            av_push(PL_beginav, (SV*)cv);		\
+	    GvCV(CvGV(cv)) = 0;               /* cv has been hijacked */\
+            call_list(oldscope, PL_beginav);		\
+            PL_curcop = &PL_compiling;			\
+            PL_compiling.op_private = (U8)(PL_hints & HINT_PRIVATE_MASK);\
+            LEAVE;					\
+	} STMT_END
+#else
 /* this is simply stolen from the code in newATTRSUB() */
 #define BSET_push_begin(ary,cv)				\
 	STMT_START {					\
@@ -586,40 +676,9 @@ static int bget_swab = 0;
 	    LEAVE;					\
 	} STMT_END
 #endif
-#if (PERL_VERSION >= 8) && (PERL_VERSION < 10)
-#define BSET_push_begin(ary,cv)				\
-	STMT_START {					\
-            I32 oldscope = PL_scopestack_ix;		\
-            ENTER;					\
-            SAVECOPFILE(&PL_compiling);			\
-            SAVECOPLINE(&PL_compiling);			\
-            if (!PL_beginav)				\
-                PL_beginav = newAV();			\
-            av_push(PL_beginav, (SV*)cv);		\
-	    GvCV(CvGV(cv)) = 0;               /* cv has been hijacked */\
-            call_list(oldscope, PL_beginav);		\
-            PL_curcop = &PL_compiling;			\
-            PL_compiling.op_private = (U8)(PL_hints & HINT_PRIVATE_MASK);\
-            LEAVE;					\
-	} STMT_END
 #endif
-#if (PERL_VERSION >= 10)
-#define BSET_push_begin(ary,cv)				\
-	STMT_START {					\
-            I32 oldscope = PL_scopestack_ix;		\
-            ENTER;					\
-            SAVECOPFILE(&PL_compiling);			\
-            SAVECOPLINE(&PL_compiling);			\
-            if (!PL_beginav)				\
-                PL_beginav = newAV();			\
-            av_push(PL_beginav, (SV*)cv);		\
-	    SvANY((CV*)cv)->xcv_gv = 0;/* cv has been hijacked */ \
-            call_list(oldscope, PL_beginav);		\
-            PL_curcop = &PL_compiling;			\
-            CopHINTS_set(&PL_compiling, (U8)PL_HINTS_PRIVATE);	\
-            LEAVE;					\
-	} STMT_END
 #endif
+
 #define BSET_push_init(ary,cv)				\
 	STMT_START {					\
 	    av_unshift((PL_initav ? PL_initav : 	\
@@ -707,9 +766,7 @@ static int bget_swab = 0;
 #endif
 
 /* old reading new + new reading old */
-#define BSET_op_pmflags(r, arg)	STMT_START {		\
-	r = arg;					\
-	} STMT_END
+#define BSET_op_pmflags(r, arg)		r = arg
 
 /* restore dups for stdin, stdout and stderr */
 #define BSET_xio_ifp(sv,fd)						\
@@ -723,10 +780,32 @@ static int bget_swab = 0;
       }									\
     } STMT_END
 
+#if PERL_VERSION >= 17
+#define BSET_newpadlx(padl, arg)  STMT_START {		\
+	    padl = (SV*)pad_new(arg);			\
+	    BSET_OBJ_STOREX(padl);			\
+	} STMT_END
+#if (PERL_VERSION >= 19) || ( PERL_VERSION == 19 && PERL_SUBVERSION > 3)
+#define BSET_padl_name(padl, pad)                \
+    PadlistARRAY((PADLIST*)padl)[0] = (PAD*)pad; \
+    PadnamelistMAXNAMED((PAD*)pad) = AvFILL((AV*)pad)
+#else
+#define BSET_padl_name(padl, pad)  PadlistARRAY((PADLIST*)padl)[0] = (PAD*)pad
+#endif
+#define BSET_padl_sym(padl, pad)   PadlistARRAY((PADLIST*)padl)[1] = (PAD*)pad
+#define BSET_xcv_name_hek(cv, arg)                                      \
+  STMT_START {                                                          \
+    U32 hash; I32 len = strlen(arg);                                    \
+    PERL_HASH(hash, arg, len);                                          \
+    ((XPVCV*)MUTABLE_PTR(SvANY(cv)))->xcv_gv_u.xcv_hek = share_hek(arg,len,hash); \
+    CvNAMED_on(cv);                                                     \
+  } STMT_END
+#endif
+
 
 /* NOTE: The bytecode header only sanity-checks the bytecode. If a script cares about
  * what version of Perl it's being called under, it should do a 'use 5.006_001' or
- * equivalent. However, since the header includes checks required an exact match in
+ * equivalent. However, since the header includes checks for a match in
  * ByteLoader versions (we can't guarantee forward compatibility), you don't 
  * need to specify one.
  * 	use ByteLoader;

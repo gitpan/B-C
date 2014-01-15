@@ -3,7 +3,115 @@
 	The Perl compiler was in CORE from alpha4 until Perl 5.9.4
 	and worked quite fine with Perl 5.6 and 5.8
 
+1.43	2014-01-15 rurban
+	new 5.16, and partial 5.18, 5.20 and windows support.
+        Many more fixes and testcases.
+        Bytecode is still broken on 5.18, esp non-threaded. 5.20 looks pretty good though.
+
+        * C: Fix -u<module> without file extension.
+	With hek do not drop FAKE, only for const pv.
+	Fixed $$ ($PID) to be dynamic, issue 108. Thanks to flexvault for reporting this.
+        Fixed double precision to 16 digits. The nbody shootout test passes now.
+        Fixed refcounts of *ENV, issue 111.
+        Fixed wrong boot_ arg for the xs version check with --staticxs
+        Better fix for overwriting of @ARGV <O3, test c_argv:1 and c_allow_opts.t:1
+        Fixed refinition warnings of XS CONSTSUB. Ignore them as they are
+          loaded later.
+        Add $dlmodule::VERSION as 2nd arg to boot_$dlmodule resp. $dlmodule::bootstrap
+          to get rid of the pesky Invalid version format error in xs_version_bootcheck
+          if the $VERSION had already version magic attached. (no testcase, hard to repro)
+        perl 5.16.0 shipped a slightly broken B without cop_stashlen. As workaround
+          we do not support utf8 stashes nor null bytes in stashes on 5.16.0 threaded.
+        Fixed Null COP storage for 5.16 and 5.17
+        Fix amagic_generation which was removed with 5.17
+        Fix ALLOW_PERL_OPTIONS: add -e behind all processed options, not before
+        Fixed HvAUX init. Previously only with magic hashes, now on all OOK hashes (OOK+SHAREKEYS)
+          e.g. %warning::Bits
+        Added support for new PADLIST type since 5.17.4 (with xpadl_id) and 5.17.6 (without)
+        $^X returns now the real executable name, not just perl or perl.exe
+        Adjust COW string lengths to hold the COW_REFCNT byte at the end
+        Fix unicode string CUR and LEN (#142, #162)
+        Fix unicode hashkeys (HEK) mostly (#200), but not yet testc.sh 2001 (compile-time
+          stored utf8 heks)
+        Save HvTOTALKEYS at run-time as max added to the number of run-time added keys (#178)
+        Fix UV uvuformat on 32bit -Duse64bitint (#145)
+        op_pmreplstart is now run-time initialized >= 5.10 (#160)
+        Fixed special usage of magic vars @-,@+,%+,$-,$! (#90)
+        Fixed wrong REGEXP length for compiled QR data (#143)
+        Fixed wrong -O3 comparison of strings to numbers (#138,#141, branch new-cog), unified
+          PV handling, disabled -fcog replaced by -O3 -fconst-strings
+        Fixed NUL-byte handling in strings by using B::SV->PV instead of PVX (#237)
+        Storing now bareword filehandles (#148,#149)
+        Do not create GvGP at all. This also removes the need for newGP() (Windows/AIX)
+        use Config does not include B anymore, Internals::V now in __ANON__ package
+        Fixed handling of empty - not successfully autoloaded - CVs (#235, #159, ...)
+          by storing the SV and XPVCV but ignoring it and defer to run-time get_cv()
+        Unify handling of static and dynamic strings, use ptr_undef throughout instead
+          of NULL vs &PL_sv_undef (save_pv_or_rv => savesym, cur, len, pv, static)
+        Restore $^H, the numeric value of global warnings flags (#193,#207,#243)
+        Restore more missing globals: ${^UNICODE} ${^UTF8LOCALE} $; $\ $, $/ $" $|
+          $^A $^L $: $^H $^R $% $- $= if set in a BEGIN block or via cmdline (#256,#231)
+        Restore even deprecated vars $] $# $* (#171)
+        Fix HvAUX memory corruption, accessing HvAUX beyond HE fields, esp. with threaded perls.
+          Initialize now HvAUX backref and mro_meta fields.
+        Do not boot internal core XS packages twice, refer to internal XS functions dynamically
+          and do not link to them. Fixes fix Windows/AIX with strict linking.
+        Defer dynaloaded GvCV initialization after dl_init()
+        Fixed storage of non-special lexical warnings (#258 warnsize-i258)
+	Fixed storage of shared heks, support IsCOW_hek (i.e. method names)
+        Support new ReANY since 5.17.6 (#258 reg_temp_copy)
+        Support stash symtab magic for PMf_ONCE m?? and reset (#188)
+        Fixed POSIX overflow constants warnings for DBL_MAX,DBL_MIN,LONG_MIN,LONG_MAX (#262)
+        Support user-defined static_ext modules, which are already booted from core.
+        Add more DynaLoader::dl_debug output (set PERL_DL_DEBUG=1)
+        Enforce -ffold on an ucfirst op or $INC{'unicore/To/Title.pl'} (#242)
+        Mark empty but overloaded packages (#172). This is merely workaround for reduced testcases.
+        Set PadnamelistMAXNAMED(comppad_name) needed since 5.19.3 for eval string (#268)
+        Add new option -fno-delete-pkg to control if to ignore compiler-only dependent packages,
+          compiler-independent packages are now always saved. Save those package names at Makefile.PL
+          in @B::C::Flags::deps.
+
+        * perlcc (2.14): new option --dryrun, -v5 does not -Dsp,-v
+         new option -f passthru to C and CC
+        * perlcc (2.15): fixed default --spawn: use waitpid which was broken for parallel builds.
+        fixed warning Prototype mismatch: sub main::gettimeofday: none vs () at perlcc line 261
+        improved --version
+        added --perlopts to handle -DALLOW_PERL_OPTIONS
+        * perlcc (2.16): changed output name rules:
+        Without given output file name we use the name of the input file (in the subdir)
+        or with -e a.out resp. a.exe and a randomized intermediate C filename.
+        If the input file is an absolute path on non-windows systems use the basename.
+	* CC (1.13): Use the B::C integer and double precision logic (ivx, nvx).
+        Fixed double precision to 16 digits. The nbody shootout is now 2x faster than perl.
+        Added optimizations: -fno-magic, -fno-autovivify, -faelem
+        Detect "no autovivification;" pragma.
+        New -fno-taint, -fomit_taint is deprecated
+        Fix amagic_generation which was removed with 5.17
+        Use new perl6 type names: int, num, str. double and string are deprecated.
+	* Bytecode (1.14): fixed require and op_first, issue 97
+	Fixed regex_pad offset in threaded perls >= 5.11, issue 68.
+        New type B::PAD isa B::AV (PADLIST for 5.17.5),
+        New bytecodes newpadlx, padl_name, padl_sym (PADLIST for 5.17.5)
+        Fixed CvGV_set causing Attempt to free unreferenced scalar in push_begin (42,43)
+        Fixed -Do (peek ops)
+        Renamed option -f to -F for files.
+        Fixed READONLY magic and restricted hashes, issue 98
+        Support IsCOW xpvshared strings (>=5.18)
+        Fixed wrong xpvshared logic (5.10-5.17), issue 138
+        Optimized away 0=default op and gp flags and pointers
+        Optimized away default sv_refcnt=1 (GV not), and skip redundant bytecodes
+        Set PadnamelistMAXNAMED(comppad_name) needed since 5.19.3 for eval string (#268)
+
+	* ByteLoader (0.10): set sv_refcnt to 1 in newsv to skip most defaults
+        * Assembler (1.11): allow "newpadlx 0"
+        * Disassembler (1.12): use B::Concise op_flags and private_flags
+	* Stash (1.03): fix compilation for 5.8.8 and below: gv_fetchsv missing
+	* t/perldoc.t: perlcc fails with 5.8 because Cwd disturbs the
+	  fragile method package finder for File::Spec. Use cc_harness.
+
 1.42	2012-02-01 rurban
+        stable up to 5.14
+
 	* C: Improved finding methods in parent classes (Warning: method not found),
 	Save @ISA of those child classes.
 	Re-implement and simplify my_share_hek, now in terms of share_hek.

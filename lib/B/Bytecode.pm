@@ -3,7 +3,7 @@
 # Copyright (c) 1994-1999 Malcolm Beattie. All rights reserved.
 # Copyright (c) 2003 Enache Adrian. All rights reserved.
 # Copyright (c) 2008-2011 Reini Urban <rurban@cpan.org>. All rights reserved.
-# Copyright (c) 2011-2012 cPanel Inc. All rights reserved.
+# Copyright (c) 2011-2013 cPanel Inc. All rights reserved.
 # This module is free software; you can redistribute and/or modify
 # it under the same terms as Perl itself.
 
@@ -13,9 +13,9 @@
 
 package B::Bytecode;
 
-our $VERSION = '1.13';
+our $VERSION = '1.14';
 
-#use 5.008;
+use 5.008;
 use B qw( class main_cv main_root main_start
 	  begin_av init_av end_av cstring comppadlist
 	  OPf_SPECIAL OPf_STACKED OPf_MOD
@@ -29,7 +29,7 @@ BEGIN {
     eval q[
       sub SVp_NOK() {}; # unused
       sub SVf_NOK() {}; # unused
-   ];
+     ];
   }
   else {
     B->import(qw(SVp_NOK SVf_NOK @specialsv_name @optype));
@@ -40,6 +40,16 @@ BEGIN {
 		 SVf_FAKE));
   } else {
     B->import(qw(walkoptree walksymtable));
+  }
+  if ($] > 5.017) {
+    B->import('SVf_IsCOW') ;
+  } else {
+    eval q[
+      sub SVf_IsCOW() {}; # unused
+     ];
+  }
+  if ( $] >= 5.017005 ) {
+    @B::PAD::ISA = ('B::AV');
   }
 }
 use strict;
@@ -52,6 +62,8 @@ my $PERL56  = ( $] <  5.008001 );
 my $PERL510 = ( $] >= 5.009005 );
 my $PERL512 = ( $] >= 5.011 );
 #my $PERL514 = ( $] >= 5.013002 );
+my $PERL518 = ( $] >= 5.017006 );
+my $PERL520 = ( $] >= 5.019002 );
 my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
 our ($quiet, $includeall, $savebegins, $T_inhinc);
 my ( $varix, $opix, %debug, %walked, %files, @cloop );
@@ -68,26 +80,33 @@ sub nice ($) { }
 sub nice1 ($) { }
 
 my %optype_enum;
-my ($SVt_PV, $SVt_PVGV, $SVf_FAKE, $POK);
+my ($SVt_PVGV, $SVf_FAKE, $POK);
 if ($PERL56) {
   sub dowarn {};
-  $SVt_PV = 4;
   $SVt_PVGV = 13;
   $SVf_FAKE = 0x00100000;
   $POK = 0x00040000 | 0x04000000;
   sub MAGICAL56 { $_[0]->FLAGS & 0x000E000 } #(SVs_GMG|SVs_SMG|SVs_RMG)
 } else {
   no strict 'subs';
-  $SVt_PV = 4;
   $SVt_PVGV = SVt_PVGV;
   $SVf_FAKE = SVf_FAKE;
 }
+
+{ # block necessary for caller to work
+  my $caller = caller;
+  if ( $] > 5.017 and $] < 5.019004 and ($caller eq 'O' or $caller eq 'Od' )) {
+    require XSLoader;
+    XSLoader::load('B::C'); # for op->slabbed... workarounds
+  }
+}
+
 for ( my $i = 0 ; $i < @optype ; $i++ ) {
   $optype_enum{ $optype[$i] } = $i;
 }
 
 BEGIN {
-  my $ithreads = $Config{'useithreads'} eq 'define';
+  my $ithreads = $Config::Config{'useithreads'} eq 'define';
   eval qq{
 	sub ITHREADS() { $ithreads }
 	sub VERSION() { $] }
@@ -95,7 +114,7 @@ BEGIN {
   die $@ if $@;
 }
 
-sub ashex {$quiet ? undef : sprintf("0x%x",shift)}
+sub as_hex {$quiet ? undef : sprintf("0x%x",shift)}
 
 #################################################
 
@@ -123,13 +142,18 @@ sub sv_flags {
   return '' if $quiet or $B::Concise::VERSION < 0.74;    # or ($] == 5.010);
   return '' unless $debug{Comment};
   return 'B::SPECIAL' if $_[0]->isa('B::SPECIAL');
+  return 'B::PADLIST' if $_[0]->isa('B::PADLIST');
+  return 'B::NULL'    if $_[0]->isa('B::NULL');
   my ($sv) = @_;
   my %h;
 
   # TODO: Check with which Concise and B versions this works. 5.10.0 fails.
   # B::Concise 0.66 fails also
   sub B::Concise::fmt_line { return shift; }
-  %h = B::Concise::concise_op( $ops{ $tix - 1 } ) if ref $ops{ $tix - 1 };
+  my $op = $ops{ $tix - 1 };
+  if (ref $op and !$op->targ) { # targ assumes a valid curcv
+    %h = B::Concise::concise_op( $op );
+  }
   B::Concise::concise_sv( $_[0], \%h, 0 );
 }
 
@@ -170,8 +194,7 @@ sub B::OP::ix {
       if ($op->name eq 'entertry') {
 	$opsize = $op->size + (2*$Config{ptrsize});
 	$arg = $PERL56 ? $optype_enum{LOGOP} : $opsize | $optype_enum{LOGOP} << 7;
-        warn "[perl #80622] Upgrading entertry from BASEOP to LOGOP...\n"
-	  unless $quiet;
+        warn "[perl #80622] Upgrading entertry from BASEOP to LOGOP...\n" unless $quiet;
         bless $op, 'B::LOGOP';
       } elsif ($op->name eq 'aelemfast') {
         if (0) {
@@ -179,8 +202,7 @@ sub B::OP::ix {
           my $type  = ITHREADS ? $optype_enum{PADOP} : $optype_enum{SVOP};
           $opsize = $op->size + $Config{ptrsize};
           $arg = $PERL56 ? $type : $opsize | $type << 7;
-          warn "Upgrading aelemfast from BASEOP to $class...\n"
-            unless $quiet;
+          warn "Upgrading aelemfast from BASEOP to $class...\n" unless $quiet;
           bless $op, "B::$class";
         }
       } elsif ($DEBUGGING) { # only needed when we want to check for new wrong BASEOP's
@@ -188,9 +210,11 @@ sub B::OP::ix {
 	  my $class = Opcodes::opclass($op->type);
 	  if ($class > 0) {
 	    my $classname = $optype[$class];
-	    my $name = $op->name;
-            warn "Upgrading $name BASEOP to $classname...\n" if $classname and !$quiet;
-	    bless $op, "B::".$classname if $classname;
+            if ($classname) {
+              my $name = $op->name;
+              warn "Upgrading $name BASEOP to $classname...\n"  unless $quiet;
+              bless $op, "B::".$classname;
+            }
 	  }
 	}
       }
@@ -222,13 +246,32 @@ sub B::SV::ix {
   defined($ix) ? $ix : do {
     nice '[' . class($sv) . " $tix]";
     B::Assembler::maxsvix($tix) if $debug{A};
-    my $type = $sv->FLAGS & 0xff; # SVTYPEMASK
-    asm "newsvx", $sv->FLAGS, 
-     $debug{Comment} ? sprintf("type=%d,flags=0x%x,%s", $type, $sv->FLAGS,sv_flags($sv)) : '';
+    my $flags = $sv->FLAGS;
+    my $type = $flags & 0xff; # SVTYPEMASK
+    # Set TMP_on, MY_off, not to be tidied (test 48),
+    # otherwise pad_tidy will set PADSTALE_on and assert. Since 5.16 TMP and STALE share the same bit.
+    #if (ref $sv eq 'B::NULL' and $sv->REFCNT > 1 and $] >= 5.016) {
+      # $flags |= 0x00020000;  # SvPADTMP_on
+      # $flags &= ~0x00040000; # SvPADMY_off
+    #}
+    asm "newsvx", $flags,
+     $debug{Comment} ? sprintf("type=%d,flags=0x%x,%s", $type, $flags, sv_flags($sv)) : '';
     asm "stsv", $tix if $PERL56;
     $svtab{$$sv} = $varix = $ix = $tix++;
-    #nice "\tsvtab ".$$sv." => bsave(".$ix.");
     $sv->bsave($ix);
+    $ix;
+  }
+}
+
+sub B::PADLIST::ix {
+  my $padl = shift;
+  my $ix = $svtab{$$padl};
+  defined($ix) ? $ix : do {
+    nice '[' . class($padl) . " $tix]";
+    B::Assembler::maxsvix($tix) if $debug{A};
+    asm "newpadlx", 1;
+    $svtab{$$padl} = $varix = $ix = $tix++;
+    $padl->bsave($ix);
     $ix;
   }
 }
@@ -265,9 +308,9 @@ sub B::GV::ix {
       asm "gv_fetchpvx", cstring $name;
       asm "stsv", $tix if $PERL56;
       $svtab{$$gv} = $varix = $ix = $tix++;
-      asm "sv_flags",  $gv->FLAGS, ashex($gv->FLAGS);
+      asm "sv_flags",  $gv->FLAGS, as_hex($gv->FLAGS);
       asm "sv_refcnt", $gv->REFCNT;
-      asm "xgv_flags", $gv->GvFLAGS, ashex($gv->GvFLAGS);
+      asm "xgv_flags", $gv->GvFLAGS, as_hex($gv->GvFLAGS);
 
       asm "gp_refcnt", $gv->GvREFCNT;
       asm "load_glob", $ix if $name eq "CORE::GLOBAL::glob";
@@ -288,13 +331,13 @@ sub B::GV::ix {
       # }}}} XXX
 
       nice1 "-GP-", asm "ldsv", $varix = $ix, sv_flags($gv) unless $ix == $varix;
-      asm "gp_sv", $svix, sv_flags( $gv->SV );
-      asm "gp_av", $avix, sv_flags( $gv->AV );
-      asm "gp_hv", $hvix, sv_flags( $gv->HV );
-      asm "gp_cv", $cvix, sv_flags( $gv->CV );
-      asm "gp_io", $ioix;
-      asm "gp_cvgen", $gv->CVGEN;
-      asm "gp_form",  $formix;
+      asm "gp_sv", $svix, sv_flags( $gv->SV ) if $svix;
+      asm "gp_av", $avix, sv_flags( $gv->AV ) if $avix;
+      asm "gp_hv", $hvix, sv_flags( $gv->HV ) if $hvix;
+      asm "gp_cv", $cvix, sv_flags( $gv->CV ) if $cvix;
+      asm "gp_io", $ioix if $ioix;
+      asm "gp_cvgen", $gv->CVGEN if $gv->CVGEN;
+      asm "gp_form",  $formix if $formix;
       asm "gp_file",  pvix $gv->FILE;
       asm "gp_line",  $gv->LINE;
       asm "formfeed", $svix if $name eq "main::\cL";
@@ -306,8 +349,7 @@ sub B::GV::ix {
       asm "stsv", $tix if $PERL56;
       $svtab{$$gv} = $varix = $ix = $tix++;
       if ( !$PERL510 ) {
-        #GV_without_GP has no GvFlags
-        asm "xgv_flags", $gv->GvFLAGS;
+        asm "xgv_flags", $gv->GvFLAGS;  # GV_without_GP has no GvFlags
       }
       if ( !$PERL510 and !$PERL56 and $gv->STASH ) {
         my $stashix = $gv->STASH->ix;
@@ -335,7 +377,7 @@ sub B::HV::ix {
       B::Assembler::maxsvix($tix) if $debug{A};
       asm "gv_stashpvx", cstring $name;
       asm "ldsv", $tix if $PERL56;
-      asm "sv_flags", $hv->FLAGS, ashex($hv->FLAGS);
+      asm "sv_flags", $hv->FLAGS, as_hex($hv->FLAGS);
       $svtab{$$hv} = $varix = $ix = $tix++;
       asm "xhv_name", pvix $name;
 
@@ -363,7 +405,7 @@ sub B::HV::ix {
       asm "xmg_stash", $stashix;
       asm( "xhv_riter", $hv->RITER ) if VERSION < 5.009;
     }
-    asm "sv_refcnt", $hv->REFCNT;
+    asm "sv_refcnt", $hv->REFCNT if $hv->REFCNT != 1;
     $ix;
   }
 }
@@ -385,7 +427,7 @@ sub B::NULL::bsave {
   if ($PERL56) {
     asm "stsv", $ix;
   } else {
-    asm "sv_refcnt", $sv->REFCNT;
+    asm "sv_refcnt", $sv->REFCNT if $sv->REFCNT != 1;
   }
 }
 
@@ -397,24 +439,35 @@ sub B::RV::bsave {
   my $rvix = $sv->RV->ix;
   $sv->B::NULL::bsave($ix);
   # RV with DEBUGGING already requires sv_flags before SvRV_set
-  asm "sv_flags", $sv->FLAGS, ashex($sv->FLAGS);
+  asm "sv_flags", $sv->FLAGS, as_hex($sv->FLAGS);
   asm "xrv", $rvix;
 }
 
 sub B::PV::bsave {
   my ( $sv, $ix ) = @_;
   $sv->B::NULL::bsave($ix);
+  return unless $sv;
   if ($PERL56) {
     #$sv->B::SV::bsave;
     if ($sv->FLAGS & $POK) {
-      asm  "newpv", pvstring $sv->PV ;
+      asm  "newpv", pvstring $sv->PV;
       asm  "xpv";
     }
-  } elsif ($PERL510 and $sv and ($sv->FLAGS & 0x09000000) == 0x09000000) { # 42
-    asm "newpv", pvstring $sv->PVBM;
+  } elsif ($PERL518 and (($sv->FLAGS & SVf_IsCOW) == SVf_IsCOW)) { # COW
+    asm "newpv", pvstring $sv->PV;
     asm "xpvshared";
-  } else {
+  } elsif ($PERL510 and (($sv->FLAGS & 0x09000000) == 0x09000000)) { # SHARED
+    if ($sv->FLAGS & 0x40000000 and !($sv->FLAGS & 0x00008000)) { # pbm_VALID, !SCREAM
+      asm "newpv", pvstring $sv->PVBM;
+    } else {
+      asm "newpv", pvstring $sv->PV;
+    }
+    asm "xpvshared";
+  } elsif ($PERL510 and $sv->FLAGS & 0x40000000 and !($sv->FLAGS & 0x00008000)) { # pbm_VALID, !SCREAM
     asm "newpv", pvstring $sv->PVBM;
+    asm "xpv";
+  } else {
+    asm "newpv", pvstring $sv->PV;
     asm "xpv";
   }
 }
@@ -463,7 +516,8 @@ sub B::PVIV::bsave {
   } else {
     # PVIV GV 8009, GV flags & (4000|8000) illegal (SVpgv_GP|SVp_POK)
     asm "xiv", !ITHREADS
-      && $sv->FLAGS & ( $SVf_FAKE | SVf_READONLY ) ? "0 # but true" : $sv->IVX;
+      && (($sv->FLAGS & ($SVf_FAKE|SVf_READONLY)) == ($SVf_FAKE|SVf_READONLY))
+         ? "0 # but true" : $sv->IVX;
   }
 }
 
@@ -495,8 +549,10 @@ sub B::PVMG::domagic {
   my @mglist = $sv->MAGIC;
   my ( @mgix, @namix );
   for (@mglist) {
+    my $mg = $_;
     push @mgix, $_->OBJ->ix;
-    push @namix, $_->PTR->ix if $_->LENGTH == B::HEf_SVKEY;
+    push @namix, $mg->PTR->ix if $mg->LENGTH == B::HEf_SVKEY;
+    $_ = $mg;
   }
 
   nice1 '-' . class($sv) . '-', asm "ldsv", $varix = $ix unless $ix == $varix;
@@ -593,7 +649,7 @@ sub B::IO::bsave {
 sub B::CV::bsave {
   my ( $cv, $ix ) = @_;
   my $stashix   = $cv->STASH->ix;
-  my $gvix      = $cv->GV->ix;
+  my $gvix      = ($cv->GV and ref($cv->GV) ne 'B::SPECIAL') ? $cv->GV->ix : 0;
   my $padlistix = $cv->PADLIST->ix;
   my $outsideix = $cv->OUTSIDE->ix;
   my $startix   = $cv->START->opwalk;
@@ -614,7 +670,13 @@ sub B::CV::bsave {
   my $cvflags = $cv->CvFLAGS;
   $cvflags |= 0x400 if $] >= 5.013 and !$cv->MAGIC;
   asm "xcv_flags",       $cvflags;
-  asm "xcv_gv",          $gvix;
+  if ($gvix) {
+    asm "xcv_gv",        $gvix;
+  } elsif ($] >= 5.018001 and $cv->NAME_HEK) { # ignore main_cv
+    asm "xcv_name_hek",  pvix $cv->NAME_HEK;   # set name_hek for lexsub (#130)
+  #} elsif ($] >= 5.017004) {                   # 5.18.0 empty name, missing B API
+  #  asm "xcv_name_hek",  pvix "_";
+  }
   asm "xcv_file",        pvix $cv->FILE if $cv->FILE;    # XXX AD
 }
 
@@ -623,6 +685,16 @@ sub B::FM::bsave {
 
   $form->B::CV::bsave($ix);
   asm "xfm_lines", $form->LINES;
+}
+
+sub B::PAD::bsave {
+  my ( $av, $ix ) = @_;
+  my @array = $av->ARRAY;
+  $_ = $_->ix for @array; # save the elements
+  $av->B::NULL::bsave($ix);
+  # av_extend always allocs 3
+  asm "av_extend", scalar @array if @array;
+  asm "av_pushx", $_ for @array;
 }
 
 sub B::AV::bsave {
@@ -642,15 +714,15 @@ sub B::AV::bsave {
 
   if ($PERL56) {
     # SvREADONLY_off($av) w PADCONST
-    asm "sv_flags", $av->FLAGS & ~SVf_READONLY, ashex($av->FLAGS);
+    asm "sv_flags", $av->FLAGS & ~SVf_READONLY, as_hex($av->FLAGS);
     $av->domagic($ix) if MAGICAL56($av);
-    asm "xav_flags", $av->AvFLAGS, ashex($av->AvFLAGS);
+    asm "xav_flags", $av->AvFLAGS, as_hex($av->AvFLAGS);
     asm "xav_max", -1;
     asm "xav_fill", -1;
     if ($av->FILL > -1) {
       asm "av_push", $_ for @array;
     } else {
-      asm "av_extend", $av->MAX if $av->MAX >= 0;
+      asm "av_extend", $av->MAX if $av->MAX >= 0 and $av->{ref} ne 'PAD';
     }
     asm "sv_flags", $av->FLAGS if $av->FLAGS & SVf_READONLY; # restore flags
   } else {
@@ -658,12 +730,26 @@ sub B::AV::bsave {
     asm "av_extend", $av->MAX if $av->MAX >= 0;
     asm "av_pushx", $_ for @array;
     if ( !$PERL510 ) {        # VERSION < 5.009
-      asm "xav_flags", $av->AvFLAGS, ashex($av->AvFLAGS);
+      asm "xav_flags", $av->AvFLAGS, as_hex($av->AvFLAGS);
     }
     # asm "xav_alloc", $av->AvALLOC if $] > 5.013002; # XXX new but not needed
   }
-  asm "sv_refcnt", $av->REFCNT;
+  asm "sv_refcnt", $av->REFCNT if $av->REFCNT != 1;
   asm "xmg_stash", $stashix;
+}
+
+sub B::PADLIST::bsave {
+  my ( $padl, $ix ) = @_;
+  my @array = $padl->ARRAY;
+  bless $array[0], 'B::PAD';
+  bless $array[1], 'B::PAD';
+  my $ix0 = $array[0]->ix; # comppad_name
+  my $ix1 = $array[1]->ix; # comppad syms
+
+  nice "-PADLIST-",
+    asm "ldsv", $varix = $ix unless $ix == $varix;
+  asm "padl_name", $ix0;
+  asm "padl_sym",  $ix1;
 }
 
 sub B::GV::desired {
@@ -705,7 +791,7 @@ sub B::HV::bwalk {
       asm "gv_fetchpvx", cstring ($hv->NAME . "::" . $k);
       $svtab{$$v} = $varix = $tix;
       # we need the sv_flags before, esp. for DEBUGGING asserts
-      asm "sv_flags",  $v->FLAGS, ashex($v->FLAGS);
+      asm "sv_flags",  $v->FLAGS, as_hex($v->FLAGS);
       $v->bsave( $tix++ );
     }
   }
@@ -722,10 +808,18 @@ sub B::OP::bsave_thin {
   if ( $ix != $opix ) {
     nice '-' . $op->name . '-', asm "ldop", $opix = $ix;
   }
-  asm "op_flags",   $op->flags, op_flags( $op->flags );
+  asm "op_flags",   $op->flags, op_flags( $op->flags ) if $op->flags;
   asm "op_next",    $nextix;
-  asm "op_targ",    $op->targ if $op->type;             # tricky
-  asm "op_private", $op->private;                       # private concise flags?
+  asm "op_targ",    $op->targ if $op->type and $op->targ;  # tricky
+  asm "op_private", $op->private if $op->private;          # private concise flags?
+  if ($] >= 5.017 and $op->can('slabbed')) {
+    asm "op_slabbed", $op->slabbed if $op->slabbed;
+    asm "op_savefree", $op->savefree if $op->savefree;
+    asm "op_static", $op->static if $op->static;
+    if ($] >= 5.019002 and $op->can('folded')) {
+      asm "op_folded", $op->folded if $op->folded;
+    }
+  }
 }
 
 sub B::OP::bsave;
@@ -746,10 +840,12 @@ sub B::UNOP::bsave {
     && $op->flags & OPf_MOD
     && $op->private & OPpLVAL_INTRO
 
-    # change #18774 made my life hard
+    # change #18774 (localref) made my life hard (commit 82d039840b913b4)
     ? $first->ix
     : 0;
 
+  # XXX Are there more new UNOP's with first?
+  $firstix = $first->ix if $name eq 'require'; #issue 97
   $op->B::OP::bsave($ix);
   asm "op_first", $firstix;
 }
@@ -781,7 +877,7 @@ sub B::BINOP::bsave {
 
 sub B::LISTOP::bsave {
   my ( $op, $ix ) = @_;
-  bwarn( $op->peekop, ", ix: $ix" ) if $debug{o};
+  bwarn( B::peekop($op), ", ix: $ix" ) if $debug{o};
   my $name = $op->name;
   sub blocksort() { OPf_SPECIAL | OPf_STACKED }
   if ( $name eq 'sort' && ( $op->flags & blocksort ) == blocksort ) {
@@ -1027,10 +1123,10 @@ sub B::OP::opwalk {
   }
 }
 
-# Do run-time requires with -s savebegin and without -i includeall.
+# Do run-time requires with -b savebegin and without -i includeall.
 # Otherwise all side-effects of BEGIN blocks are already in the current
 # compiled code.
-# -s or !-i will have smaller code, but run-time access of dependent modules
+# -b or !-i will have smaller code, but run-time access of dependent modules
 # such as with python, where all modules are byte-compiled.
 # With -i the behaviour is similar to the C or CC compiler, where everything
 # is packed into one file.
@@ -1178,7 +1274,7 @@ use ByteLoader '$ByteLoader::VERSION';
       # Maybe: Fix the plc reader, if 'perl -MByteLoader <.plc>' is called
     }
     elsif (/^-k/) {
-      keep_syn;
+      keep_syn unless $PERL510;
     }
     elsif (/^-m/) {
       $module = 1;
@@ -1186,7 +1282,7 @@ use ByteLoader '$ByteLoader::VERSION';
     elsif (/^-o(.*)$/) {
       open STDOUT, ">$1" or die "open $1: $!";
     }
-    elsif (/^-f(.*)$/) {
+    elsif (/^-F(.*)$/) {
       $files{$1} = 1;
     }
     elsif (/^-i/) {
@@ -1266,6 +1362,11 @@ use ByteLoader '$ByteLoader::VERSION';
       }
       walkoptree( main_root, "bsave" ) unless ref(main_root) eq "B::NULL";
     }
+
+    asm "signal", cstring "__WARN__"    # XXX
+      if !$PERL56 and warnhook->ix;
+    save_init_end;
+
     unless ($module) {
       nice '<main_start>';
       asm "main_start", $PERL56 ? main_start->ix : main_start->opwalk;
@@ -1277,10 +1378,6 @@ use ByteLoader '$ByteLoader::VERSION';
       nice '<curpad>';
       asm "curpad",     ( comppadlist->ARRAY )[1]->ix;
     }
-
-    asm "signal", cstring "__WARN__"    # XXX
-      if !$PERL56 and warnhook->ix;
-    save_init_end;
     asm "dowarn", dowarn unless $PERL56;
 
     {
@@ -1341,6 +1438,8 @@ BEGIN blocks (C<use> package).
 This creates bigger and more independent code, but is more error prone and
 does not support pre-compiled C<.pmc> modules.
 
+It is highly recommended to use C<-i> together with C<-b> I<safebegin>.
+
 =item B<-b> savebegin
 
 Save all the BEGIN blocks.
@@ -1379,10 +1478,11 @@ C<main_root>, C<main_cv> and C<curpad> are omitted.
 
 "use package." Might be needed of the package is not automatically detected.
 
-=item B<-f>I<file>
+=item B<-F>I<file>
 
 Include file. If not C<-i> define all symbols in the given included
-source file. C<-i> would all included files, C<-f> only a certain file - full path needed.
+source file. C<-i> would all included files,
+C<-F> only a certain file - full path needed.
 
 =item B<-q>
 
@@ -1462,7 +1562,7 @@ modified by Benjamin Stuhl <sho_pi@hotmail.com>.
 
 Rewritten by Enache Adrian <enache@rdslink.ro>, 2003 a.d.
 
-Enhanced by Reini Urban <rurban@cpan.org>, 2008-2011
+Enhanced by Reini Urban <rurban@cpan.org>, 2008-2012
 
 =cut
 

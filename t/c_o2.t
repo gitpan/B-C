@@ -1,10 +1,10 @@
 #! /usr/bin/env perl
 # better use testc.sh -O2 for debugging
 BEGIN {
-  #unless (-d ".svn" or -d '.git') {
-  #  print "1..0 #SKIP Only if -d .svn|.git\n";
-  #  exit;
-  #}
+  unless (-d '.git' and !$ENV{NO_AUTHOR}) {
+    print "1..0 #SKIP Only if -d .git\n";
+    exit;
+  }
   if ($ENV{PERL_CORE}){
     chdir('t') if -d 't';
     @INC = ('.', '../lib');
@@ -16,7 +16,7 @@ BEGIN {
 }
 use strict;
 #my $DEBUGGING = ($Config{ccflags} =~ m/-DDEBUGGING/);
-my $ITHREADS  = ($Config{useithreads});
+#my $ITHREADS  = ($Config{useithreads});
 
 prepare_c_tests();
 

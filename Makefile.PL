@@ -5,10 +5,24 @@ use 5.006;
 use Carp;
 
 my $core = grep { $_ eq 'PERL_CORE=1' } @ARGV;
+mkdir "lib/B/C" unless -d "lib/B/C";
+unless (-e 'lib/B/C/Flags.pm') {
+    open PH, ">", "lib/B/C/Flags.pm";
+    print PH "package B::C::Flags;\n\n";
+    print PH "\n1;\n";
+    close PH;
+    chmod 0644, "lib/B/C/Flags.pm";
+}
 
 # generate lib/B/Asmdata.pm beforehand
+my $asmdata = File::Spec->catfile('lib', 'B', 'Asmdata.pm');
+unlink $asmdata if -f $asmdata;
 # my $X = $^X =~ / / ? qq("$^X") : $^X;
-system($^X, "bytecode.pl");
+if ($core) {
+    system($^X,"-I../../lib/auto","-I../../lib","bytecode.pl");
+} else {
+    system($^X, "bytecode.pl");
+}
 
 my ($use_declare_independent_comalloc, $extra_cflags, $extra_libs) = (0, "", "");
 my $have_independent_comalloc = check_independent_comalloc();
@@ -30,22 +44,59 @@ if (grep { $_ eq 'INSTALL_PTMALLOC3' } @ARGV) {
 #        $extra_cflags .= " -gstrict-dwarf";
 #    }
 #}
+
+sub b_c_deps {
+    my $X = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
+    return `$X -Ilib -mB::C -mO -MB -e'B::C::collect_deps()'`;
+}
+
 sub write_b_c_flags {
+    my $version = shift;
     mkdir "lib/B/C" unless -d "lib/B/C";
+    my $b_c_deps = b_c_deps();
     open PH, ">", "lib/B/C/Flags.pm";
     print PH "# written by B::C Makefile.PL. \$extra_{cflags,libs} need a leading space if used.\n";
     print PH "package B::C::Flags;\n\n";
+    my $devnull = $^O eq 'MSWin32' ? 'NUL' : '/dev/null';
+    print PH "\$VERSION = '$version';\n";
+    my $REV = '';
+    if (my $sha1 = `git rev-list HEAD -1 --abbrev=7 --abbrev-commit 2>$devnull`) {
+        chomp $sha1;
+        # POSIX systems only with wc
+        if (my $num = `git rev-list --abbrev-commit HEAD | wc -l 2>$devnull`) {
+            chomp $num;
+            $REV .= "-$num";
+        }
+        $REV .= '-g'.$sha1;
+        print PH "\$B::C::REVISION = '$REV';\n\n";
+    }
     print PH "# -fav-init optimization\n";
     print PH "\$have_independent_comalloc = $have_independent_comalloc;\n";
     print PH "\$use_declare_independent_comalloc = $use_declare_independent_comalloc;\n\n";
     print PH "# use extra compiler flags, after ccopts, resp. ldopts\n";
     print PH "\$extra_cflags = \"$extra_cflags\";\n";
     print PH "\$extra_libs = \"$extra_libs\";\n";
-    print PH "\n1;\n";
+    print PH "\@deps = qw( ", $b_c_deps, " );\n\n";
+    print PH "1;\n";
     close PH;
-    chmod (0644, "lib/B/C/Flags.pm");
+    chmod 0644, "lib/B/C/Flags.pm";
 }
-write_b_c_flags;
+
+# XXX Check for 5.16.0 B-1.34 and offer to patch it? rather use `perlall --patches=Compiler`
+my $unicode_warning =
+         "  Perl handling of new unicode identifiers - package and symbol names - \n".
+	 "  without proper TR39 handling is considered a security risc and is not fully supported.\n".
+	 "  See http://websec.github.io/unicode-security-guide/\n";
+if ($] > 5.015005 and $] < 5.019004) {
+    # We do not want to support binary identifiers. safesyscalls with 5.019004 should be enabled
+    warn "Warning: Bad perl version $]\n".
+	 $unicode_warning.
+	 "  Check your code for syntax spoofs, confusables, esp. strip \\0 from package names.\n";
+} elsif ($] >= 5.019004) {
+    warn "Warning:\n".
+	 $unicode_warning.
+	 "  Check your code for syntax spoofs, confusables, strip \\0 from package names and enable use warnings 'syscalls'.\n";
+}
 
 WriteMakefile(
     NAME	 => "B::C",
@@ -56,6 +107,7 @@ WriteMakefile(
 		   'IPC::Run' => '0',    # optional
 		   'B::Flags' => '0.04', # optional
 		   'Time::HiRes' => '0', # optional
+		   'ExtUtils::Embed' => '1.25' # mandatory (missing on redhat)
                    #'B'        => '1.0901' # required but in CORE
                   },
     'AUTHOR'   => 'Malcolm Beattie (retired), '
@@ -221,6 +273,7 @@ sub install_independent_comalloc {
 
 package MY;
 
+# Ignore certain files
 sub libscan {
     # Ignore temp testing files
     return 0 if $_[1] =~ /^(\.git|\.svn|jit.*|i386|.*\.orig|bytecode.*\.pl|c?ccode.*|regen_lib\.pl)$/;
@@ -228,6 +281,8 @@ sub libscan {
     # Ignore Bytecode on 5.6 for now. The 5.6 CORE module produces better code (until fixed :)
     # Not even the Byteloader works for 5.6 assembled code. The Disassembler does not stop at ret.
     return 0 if $] < 5.007 and $_[1] =~ /ByteLoader|Asmdata\.pm|Bytecode\.pm|Assembler\.pm/;
+    # On windows the C compiler would work if DynaLoader.lib would be provided.
+    # return 0 if $^O eq 'MSWin32' and !-d ".git" and $_[1] =~ /C\.pm|C\.xs|Stackobj\.pm/;
     return $_[1];
 }
 
@@ -243,6 +298,8 @@ sub const_config {
 }
 
 sub post_constants {
+    my $mm = shift;
+    main::write_b_c_flags($mm->{VERSION});
     my $libs = "\nLIBS = $Config::Config{libs}";
     $libs .= $extra_libs if $extra_libs;
     #XXX PERL_MALLOC_DEF = -DPERL_EXTMALLOC_DEF -Dmalloc=Perl_malloc -Dfree=Perl_mfree -Drealloc=Perl_realloc -Dcalloc=Perl_calloc
@@ -253,7 +310,7 @@ sub ccflags {
     my $ccflags = shift->SUPER::ccflags(@_);
     $ccflags .= " -DHAVE_INDEPENDENT_COMALLOC" if $have_independent_comalloc;
     $ccflags .= $extra_cflags if $extra_cflags;
-    return $ccflags unless -d ".svn" or -d ".git";
+    return $ccflags if !-d ".git" or $ENV{NO_AUTHOR};
     # Recommended by http://www.network-theory.co.uk/docs/gccintro/gccintro_32.html
     # -ansi -pedantic -Wall -W -Wconversion -Wshadow -Wcast-qual -Wwrite-strings (-W => -WExtra)
     $ccflags .= " -ansi -pedantic -Wall -Wextra -Wconversion -Wshadow -Wcast-qual -Wwrite-strings"
@@ -276,6 +333,9 @@ $byterun_c : Makefile bytecode.pl @headers
 
 $byterun_h : Makefile bytecode.pl @headers
 	\$(PERL) bytecode.pl
+
+TAGS : $asmdata
+	etags --language=perl lib/B/*.pm
 ";
     if ($] > 5.009) {
         $result .= "\ntest :: subdirs-test\n\n";
@@ -284,6 +344,30 @@ $byterun_h : Makefile bytecode.pl @headers
         $result .= "\n.PHONY : \$(CONFIGDEP)\n\n";
     }
     $result;
+}
+
+sub test {
+    shift->SUPER::test(@_) . q(
+testmod :: pure_all
+	PERL_DL_NONLAZY=1 $(FULLPERLRUN) -Iblib/arch -Iblib/lib t/modules.t
+testmodall :: pure_all
+	PERL_DL_NONLAZY=1 $(FULLPERLRUN) -Iblib/arch -Iblib/lib t/modules.t -no-subset -no-date t/top100
+testc :: pure_all
+	PERL_DL_NONLAZY=1 $(FULLPERLRUN) -Iblib/arch -Iblib/lib t/c.t
+	PERL_DL_NONLAZY=1 $(FULLPERLRUN) -Iblib/arch -Iblib/lib t/c_o3.t
+testcc :: pure_all
+	PERL_DL_NONLAZY=1 $(FULLPERLRUN) -Iblib/arch -Iblib/lib t/cc.t
+testbc :: pure_all
+	PERL_DL_NONLAZY=1 $(FULLPERLRUN) -Iblib/arch -Iblib/lib t/bytecode.t
+testfast :: pure_all
+	NO_AUTHOR=1 $(FULLPERLRUN) -S prove -b -j10 -f
+testcritical :: pure_all
+	t/critical.sh
+teststatus :: pure_all
+	./status_upd -fqd
+testrelease :: pure_all
+	$(ECHO) run t/release-testing.sh and perlall testvm --all
+)
 }
 
 sub install {
