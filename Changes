@@ -3,6 +3,29 @@
 	The Perl compiler was in CORE from alpha4 until Perl 5.9.4
 	and worked quite fine with Perl 5.6 and 5.8
 
+1.44	2014-02-10 rurban
+        added adjusted CORE testsuite for 5.14. passes for 5.14.4-nt, not for 5.18.2-nt
+	(cPanel code_monkeys)
+	still missing in general are:
+	  - global destruction (use lexicals!),
+	  - attribute handlers,
+	  - compile-time perlio layers
+
+        * C: Fix -O3 with ~ and ~~ formatstrings (#277)
+	Fix SvLEN and PV ptr for empty shared hash keys (#272)
+        Use the natural @dl_modules boot order, just put attributes to the front (#259)
+	Store cop_hints to support lexical numeric hints pragmas,
+          esp. use bytes and use open attributes
+          (fixes #81 #152 #174 #176 #180 #185 #224 #235 #238 #241 #245 #253 #255 #256 #277)
+        Skip saving defined(&cv) subs (#96)
+        Fix format STDOUT/STDERR (#238, #239, #277, #284, #285, #283)
+        Save now empty bodyless subs if they exist, for signal handlers,
+          prototypes declarations and cvrefs (#251, #159, #235, #246, #270, #271, #275, #279)
+        Fix PVMG PV overwriting the RV, overload sub (#273)
+	* CC (1.14): Skip saving non-existing methods analog to B::C 1.43_06 (CC test 50)
+	* perlcc (2.17): Accept -A for -DALLOW_PERL_OPTIONS
+	* t/testc.sh: Accept -A for -DALLOW_PERL_OPTIONS
+
 1.43	2014-01-15 rurban
 	new 5.16, and partial 5.18, 5.20 and windows support.
         Many more fixes and testcases.

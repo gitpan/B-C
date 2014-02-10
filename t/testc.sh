@@ -2,6 +2,7 @@
 # t/testc.sh -c -Du,-q -B static 2>&1 |tee c.log|grep FAIL
 # for p in 5.6.2 5.8.8-nt 5.8.9d 5.10.1d 5.10.1d-nt 5.11.2d 5.11.2d-nt; do make -s clean; echo perl$p; perl$p Makefile.PL; t/testc.sh -q -O0 31; done
 # quiet c only: t/testc.sh -q -O0
+# t/testcc.sh -DOscpSql,-v,-UB::Concise,-UIO::File,-UIO::Handle,-Uwarnings
 function help {
   echo "t/testc.sh [OPTIONS] [1-$ntests]"
   echo " -D<debugflags>     for O=C or O=CC. Default: C,-DspmF,-v resp. CC,-DOscpSql,-v"
@@ -13,6 +14,7 @@ function help {
   echo " -E                 dump preprocessed source file with cc -E as _E.c"
   echo " -o                 orig. no -Mblib, use installed modules (5.6, 5.8)"
   echo " -a                 all. undo -Du. Unsilence scanning unused sub"
+  echo " -A                 -DALLOW_PERL_OPTIONS"
   echo " -q                 quiet"
   echo " -h                 help"
   echo "Without arguments try all $ntests tests. Without Option -Ox try -O0 to -O3 optimizations."
@@ -472,6 +474,8 @@ my IO::Handle $handle = IO::Socket::SSL->new(SSL_verify_mode =>0);
 $handle->blocking(0);
 print "ok";'
 result[95]='ok'
+tests[96]='defined(&B::OP::name) || print q(ok)'
+result[96]='ok'
 tests[97]='use v5.12; print q(ok);'
 result[97]='ok'
 
@@ -589,8 +593,7 @@ tests[150]='print NONEXISTENT "foo"; print "ok" if $! == 9'
 result[150]='ok'
 tests[1501]='$! = 0; print NONEXISTENT "foo"; print "ok" if $! == 9'
 result[1501]='ok'
-tests[152]='#TODO
-print "ok" if find PerlIO::Layer "perlio"'
+tests[152]='print "ok" if find PerlIO::Layer "perlio"'
 result[152]='ok'
 tests[154]='$SIG{__WARN__} = sub { die "warning: $_[0]" }; opendir(DIR, ".");closedir(DIR);print q(ok)'
 result[154]='ok'
@@ -690,7 +693,7 @@ result[169]='called
 ok
 42'
 # works fine with -O3
-tests[170]='# TODO
+tests[170]='#TODO non-O3
 eval "sub xyz (\$) : bad ;"; print "~~~~\n$@~~~~\n"'
 result[170]='~~~~
 Invalid CODE attribute: bad at (eval 1) line 1.
@@ -712,7 +715,7 @@ Constant subroutine BEGIN redefined at ./ccode173.pl line 2.
 ok 1
 ok 2
 ok 3'
-tests[174]='#TODO bytes-heavy
+tests[174]='
 my $str = "\x{10000}\x{800}";
 no warnings "utf8";
 { use bytes; $str =~ s/\C\C\z//; }
@@ -734,8 +737,7 @@ tests[175]='#TODO
 }'
 result[175]='ok - expected warning
 ok'
-tests[176]='#TODO
-use Math::BigInt; print Math::BigInt::->new(5000000000);'
+tests[176]='use Math::BigInt; print Math::BigInt::->new(5000000000);'
 result[176]='5000000000'
 tests[177]='use version; print "ok\n" if version::is_strict("4.2");'
 result[177]='ok'
@@ -752,8 +754,7 @@ our $bar = $foor; # required to generate the wrong behavior
 my $match = eval q($foo ~~ undef) ? 1 : 0;
 print "match ? $match\n";'
 result[179]='match ? 0'
-tests[180]='#TODO
-use feature "switch"; use integer; given(3.14159265) { when(3) { print "ok\n"; } }'
+tests[180]='use feature "switch"; use integer; given(3.14159265) { when(3) { print "ok\n"; } }'
 result[180]='ok'
 tests[181]='sub End::DESTROY { $_[0]->() };
 my $inx = "OOOO";
@@ -785,8 +786,7 @@ exit;
 '
 result[184]='ok'
 # usage: t/testc.sh -O3 -Dp,-UCarp 185
-tests[185]='#TODO bytes-heavy
-my $a=pack("U",0xFF);use bytes;print "not " unless $a eq "\xc3\xbf" && bytes::length($a) == 2; print "ok\n";'
+tests[185]='my $a=pack("U",0xFF);use bytes;print "not " unless $a eq "\xc3\xbf" && bytes::length($a) == 2; print "ok\n";'
 result[185]='ok'
 tests[186]='eval q/require B/; my $sub = do { package one; \&{"one"}; }; delete $one::{one}; my $x = "boom"; print "ok\n";'
 result[186]='ok'
@@ -823,9 +823,9 @@ tests[192]='use warnings;
 result[192]='ok'
 tests[193]='unlink q{not.a.file}; $! = 0; open($FOO, q{not.a.file}); print( $! ne 0 ? "ok" : q{error: $! should not be 0}."\n"); close $FOO;'
 result[193]='ok'
-tests[194]='$0 = q{good morning, Dave}; #print "pid: $$\n";
-$s=`ps auxw | grep "$$" | grep ", Dave"|grep -v grep`;
-print q(ok) if $s =~ /good morning, Dave/'
+tests[194]='$0 = q{ccdave}; #print "pid: $$\n";
+$s=`ps auxw | grep "$$" | grep "ccdave"|grep -v grep`;
+print q(ok) if $s =~ /ccdave/'
 result[194]='ok'
 # duplicate of 152
 tests[195]='use PerlIO;  eval { require PerlIO::scalar }; find PerlIO::Layer "scalar"'
@@ -881,6 +881,14 @@ open F, "<", "/dev/null";
 my %l = map {$_=>1} PerlIO::get_layers(F, input  => 1);
 print $l{crlf} ? q(ok) : keys(%l);'
 result[203]='ok'
+# issue 29
+tests[2900]='use open qw(:std :utf8);
+BEGIN{ `echo ö > xx.bak`; }
+open X, "xx.bak";
+$_ = <X>;
+print unpack("U*", $_), " ";
+print $_ if /\w/;'
+result[2900]='24610 ö'
 tests[207]='use warnings;
 sub asub { }
 asub(tests => 48);
@@ -964,8 +972,7 @@ tests[236]='sub t { if ($_[0] == $_[1]) { print "ok\n"; } else { print "not ok -
 result[236]='ok'
 tests[237]='print "\000\000\000\000_"'
 result[237]='_'
-tests[238]='#TODO
-sub f ($);
+tests[238]='sub f ($);
 sub f ($) {
   my $test = $_[0];
   write;
@@ -989,8 +996,7 @@ tests[240]='my $a = "\x{100}\x{101}Aa";
 print "ok\n" if "\U$a" eq "\x{100}\x{100}AA";
 my $b = "\U\x{149}cD"; # no pb without that line'
 result[240]='ok'
-tests[241]='#TODO
-package Pickup; use UNIVERSAL qw( can ); if (can( "Pickup", "can" ) != \&UNIVERSAL::can) { print "not " } print "ok\n";'
+tests[241]='package Pickup; use UNIVERSAL qw( can ); if (can( "Pickup", "can" ) != \&UNIVERSAL::can) { print "not " } print "ok\n";'
 result[241]='ok'
 tests[242]='$xyz = ucfirst("\x{3C2}");
 $a = "\x{3c3}foo.bar";
@@ -1003,9 +1009,7 @@ tests[244]='print "($_)\n" for q{-2}..undef;'
 result[244]='(-2)
 (-1)
 (0)'
-# fails -O3 only
-tests[245]='#TODO -O3
-sub foo {
+tests[245]='sub foo {
     my ( $a, $b ) = @_;
     print "a: ".ord($a)." ; b: ".ord($b)." [ from foo ]\n";
 }
@@ -1034,38 +1038,47 @@ syntax error at (eval 1) line 1, near "package withversion 1.1_"'
 tests[251]='# TODO
 sub f;print "ok" if exists &f'
 result[251]='ok'
+tests[2511]='# TODO
+sub f :lvalue;print "ok" if exists &f'
+result[2511]='ok'
+tests[2512]='# TODO
+sub f ();print "ok" if exists &f'
+result[2512]='ok'
+tests[2513]='# TODO
+sub f ($);print "ok" if exists &f'
+result[2513]='ok'
+tests[2514]='# TODO
+sub f;print "ok" if exists &f'
+result[2514]='ok'
 # duplicate of 234
 tests[252]='my $i = 0; for ("-3".."0") { ++$i } print $i'
 result[252]='4'
-tests[253]='# TODO
-INIT { require "t/test.pl"}plan(tests=>2);is("\x{2665}", v9829);is(v9829,"\x{2665}");'
+tests[253]='INIT{require "t/test.pl"}plan(tests=>2);is("\x{2665}", v9829);is(v9829,"\x{2665}");'
 result[253]='1..2
 ok 1
-ok 2
-'
+ok 2'
 tests[254]='# TODO 197 destroy lexvar
 my $flag = 0;
 sub  X::DESTROY { $flag = 1 }
-{my $x; # x only exists in that scope
- BEGIN {$x = 42 } # initialize variable during compilation
- { $x = bless {}, "X" }
- # undef($x); # value should be free when exiting scope
+{
+  my $x;           # x only exists in that scope
+  BEGIN {$x = 42 } # initialize variable during compilation
+  $x = bless {}, "X";
+  # undef($x); # value should be free when exiting scope
 }
 print "ok\n" if $flag;'
 result[254]='ok'
-# duplicate of 185, bytes-heavy
-tests[255]='#TODO
-$a = chr(300);
+# duplicate of 185, bytes_heavy
+tests[255]='$a = chr(300);
 my $l = length($a);
 my $lb;
 { use bytes; $lb = length($a); }
 print( ( $l == 1 && $lb == 2 ) ? "ok\n" : "l -> $l ; lb -> $lb\n" );'
 result[255]='ok'
-tests[256]='# TODO
-BEGIN{ $| = 1; } print "ok\n" if $| == 1'
+tests[256]='BEGIN{ $| = 1; } print "ok\n" if $| == 1'
 result[256]='ok'
-#tests[257]=''
-#result[257]='ok'
+tests[259]='use JSON::XS; print encode_json([\0])'
+result[259]='[false]'
 tests[260]='sub FETCH_SCALAR_ATTRIBUTES {''} sub MODIFY_SCALAR_ATTRIBUTES {''}; my $a :x=1; print $a'
 result[260]='1'
 tests[261]='q(12-feb-2015) =~ m#(\d\d?)([\-\./])(feb|jan)(?:\2(\d\d+))?#; print $4'
@@ -1076,12 +1089,83 @@ tests[263]='use JSON::XS; print encode_json []'
 result[263]='[]'
 tests[264]='no warnings; warn "$a.\n"'
 result[264]='.'
+tests[272]='$d{""} = qq{ok\n}; print $d{""};'
+result[272]='ok'
+tests[2721]='BEGIN{$d{""} = qq{ok\n};} print $d{""};'
+result[2721]='ok'
+tests[273]='package Foo; use overload; sub import { overload::constant "integer" => sub { return shift }}; package main; BEGIN { $INC{"Foo.pm"} = "/lib/Foo.pm" }; use Foo; my $result = eval "5+6"; print "$result\n"'
+result[273]='11'
+tests[274]='package Foo;
+
+sub match { shift =~ m?xyz? ? 1 : 0; }
+sub match_reset { reset; }
+
+package Bar;
+
+sub match { shift =~ m?xyz? ? 1 : 0; }
+sub match_reset { reset; }
+
+package main;
+print "1..5\n";
+
+print "ok 1\n" if Bar::match("xyz");
+print "ok 2\n" unless Bar::match("xyz");
+print "ok 3\n" if Foo::match("xyz");
+print "ok 4\n" unless Foo::match("xyz");
+
+Foo::match_reset();
+print "ok 5\n" if Foo::match("xyz");'
+result[274]='1..5
+ok 1
+ok 2
+ok 3
+ok 4
+ok 5'
+tests[277]='format OUT =
+bar ~~
+.
+open(OUT, ">/dev/null"); write(OUT); close OUT;'
+result[277]=''
+tests[280]='package M; $| = 1; sub DESTROY {eval {print "Farewell ",ref($_[0])};} package main; bless \$A::B, q{M}; *A:: = \*B::;'
+result[280]='Farewell M'
+tests[281]='#TODO
+"I like pie" =~ /(I) (like) (pie)/; "@-" eq  "0 0 2 7" and print "ok\n"; print "\@- = @-\n\@+ = @+\n"'
+result[281]='ok
+@- = 0 0 2 7
+@+ = 10 1 6 10'
+tests[282]='use vars qw($glook $smek $foof); $glook = 3; $smek = 4; $foof = "halt and cool down"; my $rv = \*smek; *glook = $rv; my $pv = ""; $pv = \*smek; *foof = $pv; print "ok\n";'
+result[282]='ok'
+tests[283]='#238 Undefined format "STDOUT"
+format =
+ok
+.
+write'
+result[283]='ok'
+tests[284]='#-O3 only
+my $x="123456789";
+format OUT =
+^<<~~
+$x
+.
+open OUT, ">ccode.tmp";
+write(OUT);
+close(OUT);
+print `cat "ccode.tmp"`'
+result[284]='123
+456
+789'
+tests[289]='#debugging CvCVGV_RC assert only
+no warnings; sub z_zwap (&); print qq{ok\n} if eval q{sub z_zwap {return @_}; 1;}'
+result[284]='ok'
+tests[295]='#TODO
+"zzaaabbb" =~ m/(a+)(b+)/ and print "@- : @+\n"'
+result[295]='2 2 5 : 8 5 8'
 
 init
 
 # 
 # getopts for -q -k -E -Du,-q -v -O2, -a -c -fro-inc
-while getopts "hackoED:B:O:f:q" opt
+while getopts "haAckoED:B:O:f:q" opt
 do
   if [ "$opt" = "q" ]; then 
     QUIET=1
@@ -1112,6 +1196,9 @@ do
   fi
   if [ "$opt" = "a" ]; then # replace -Du, by -Do
     OCMD="$(echo $OCMD|sed -r -e 's/(-D.*)u,/\1o,/')" 
+  fi
+  if [ "$opt" = "A" ]; then
+      CCMD="$CCMD -DALLOW_PERL_OPTIONS"
   fi
 done
 

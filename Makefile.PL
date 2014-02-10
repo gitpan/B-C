@@ -86,7 +86,7 @@ sub write_b_c_flags {
 my $unicode_warning =
          "  Perl handling of new unicode identifiers - package and symbol names - \n".
 	 "  without proper TR39 handling is considered a security risc and is not fully supported.\n".
-	 "  See http://websec.github.io/unicode-security-guide/\n";
+	 "  See http://websec.github.io/unicode-security-guide/\n\n";
 if ($] > 5.015005 and $] < 5.019004) {
     # We do not want to support binary identifiers. safesyscalls with 5.019004 should be enabled
     warn "Warning: Bad perl version $]\n".
@@ -95,7 +95,8 @@ if ($] > 5.015005 and $] < 5.019004) {
 } elsif ($] >= 5.019004) {
     warn "Warning:\n".
 	 $unicode_warning.
-	 "  Check your code for syntax spoofs, confusables, strip \\0 from package names and enable use warnings 'syscalls'.\n";
+	 "  Check your code for syntax spoofs, confusables, strip \\0 from package names\n".
+	 "  and enable use warnings 'syscalls'.\n";
 }
 
 WriteMakefile(
@@ -144,7 +145,8 @@ WriteMakefile(
                "bytecode[0-9]* ".
                "lib/B/Asmdata.pm script/perlcc ccode* cccode* Ccode* ".
  	       "*.core *.stackdump a.out a.exe *.cee *.c *.asm *.dbg *.plc *.obj ".
-               "*.concise *~ dll.base dll.exp mod.pl pcc* *.bak *.a"
+               "*.concise *~ dll.base dll.exp mod.pl pcc* *.bak *.a ".
+               "t/CORE/*/*.bin t/CORE/*/*.c Io_argv* t/CORE/*/*.subtest.*.t t/CORE/tmp* tmp*"
              },
 );
 
@@ -367,6 +369,8 @@ teststatus :: pure_all
 	./status_upd -fqd
 testrelease :: pure_all
 	$(ECHO) run t/release-testing.sh and perlall testvm --all
+testcore :: pure_all
+	$(FULLPERLRUN) -S prove -b -j10 -f t/C-COMPILED
 )
 }
 
