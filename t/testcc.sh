@@ -1057,14 +1057,14 @@ tests[253]='INIT{require "t/test.pl"}plan(tests=>2);is("\x{2665}", v9829);is(v98
 result[253]='1..2
 ok 1
 ok 2'
-tests[254]='# TODO 197 destroy lexvar
+tests[254]='# TODO 197 destroy upgraded lexvar
 my $flag = 0;
 sub  X::DESTROY { $flag = 1 }
 {
-  my $x;           # x only exists in that scope
-  BEGIN {$x = 42 } # initialize variable during compilation
-  $x = bless {}, "X";
-  # undef($x); # value should be free when exiting scope
+  my $x;              # x only exists in that scope
+  BEGIN { $x = 42 }   # pre-initialized as IV
+  $x = bless {}, "X"; # run-time upgrade and bless to call DESTROY
+  # undef($x);        # value should be free when exiting scope
 }
 print "ok\n" if $flag;'
 result[254]='ok'
@@ -1126,7 +1126,8 @@ bar ~~
 .
 open(OUT, ">/dev/null"); write(OUT); close OUT;'
 result[277]=''
-tests[280]='package M; $| = 1; sub DESTROY {eval {print "Farewell ",ref($_[0])};} package main; bless \$A::B, q{M}; *A:: = \*B::;'
+tests[280]='#TODO -O3 #280
+package M; $| = 1; sub DESTROY {eval {print "Farewell ",ref($_[0])};} package main; bless \$A::B, q{M}; *A:: = \*B::;'
 result[280]='Farewell M'
 tests[281]='#TODO
 "I like pie" =~ /(I) (like) (pie)/; "@-" eq  "0 0 2 7" and print "ok\n"; print "\@- = @-\n\@+ = @+\n"'
