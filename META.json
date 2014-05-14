@@ -46,7 +46,7 @@
          }
       }
    },
-   "release_status" : "testing",
+   "release_status" : "stable",
    "resources" : {
       "bugtracker" : {
          "web" : "http://code.google.com/p/perl-compiler/issues"
@@ -60,5 +60,5 @@
       },
       "x_MailingList" : "http://groups.google.com/group/perl-compiler"
    },
-   "version" : "1.45_06"
+   "version" : "1.46"
 }

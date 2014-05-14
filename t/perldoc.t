@@ -33,7 +33,7 @@ my $Mblib = Mblib();
 my $perldoc = File::Spec->catfile($Config{installbin}, 'perldoc');
 my $perlcc = "$X $Mblib blib/script/perlcc";
 $perlcc .= " -Wb=-fno-fold,-fno-warnings" if $] > 5.013;
-$perlcc .= " -UB";
+$perlcc .= " -UB -uFile::Spec";
 #        .  " -uPod::Perldoc::ToMan -uPod::Perldoc::ToText -uPod::Perldoc::BaseTo";
 my $exe = $Config{exe_ext};
 my $perldocexe = $^O eq 'MSWin32' ? "perldoc$exe" : "./perldoc$exe";
@@ -79,7 +79,7 @@ my $t2 = tv_interval( $t0 );
 TODO: {
   # old perldoc 3.14_04-3.15_04: Can't locate object method "can" via package "Pod::Perldoc" at /usr/local/lib/perl5/5.14.1/Pod/Perldoc/GetOptsOO.pm line 34
   # dev perldoc 3.15_13: Can't locate object method "_is_mandoc" via package "Pod::Perldoc::ToMan"
-  local $TODO = "compiled does not print yet" if $] >= 5.016 or $] < 5.010 or $Config{useithreads};
+  local $TODO = "compiled does not print yet" if $] < 5.010;
   $ori =~ s{ /\S*perldoc }{ perldoc };
   $out =~ s{ ./perldoc }{ perldoc };
   is($out, $ori, "same result"); #2
@@ -92,7 +92,7 @@ SKIP: {
 
 unlink $perldocexe if -e $perldocexe;
 $perldocexe = $^O eq 'MSWin32' ? "perldoc_O3$exe" : "./perldoc_O3$exe";
-$compile = $]<5.010?"$X $Mblib -MO=C,-O3,-UB,-operldoc.c $perldoc":"$perlcc -O3 -o $perldocexe $perldoc";
+$compile = $]<5.010?"$X $Mblib -MO=C,-O3,-UB,-uFile::Spec,-operldoc.c $perldoc":"$perlcc -O3 -o $perldocexe $perldoc";
 diagv $compile;
 $res = `$compile`;
 system("$X $Mblib script/cc_harness -o $perldocexe perldoc.c") if $] < 5.010;
@@ -104,7 +104,7 @@ $t0 = [gettimeofday];
 ($result, $out, $err) = run_cmd("$PAGER $perldocexe $T_opt", 20);
 my $t3 = tv_interval( $t0 );
 TODO: {
-  local $TODO = "compiled does not print yet" if $] >= 5.016 or $] < 5.010 or $Config{useithreads};
+  local $TODO = "compiled does not print yet" if $] < 5.010;
   $out =~ s{ ./perldoc_O3 }{ perldoc };
   is($out, $ori, "same result"); #5
 }

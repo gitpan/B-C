@@ -1,5 +1,6 @@
 #directory /usr/src/perl/perl-5.10.1/perl-5.10.1
 #directory /usr/src/perl/perl-5.6.2
+add-auto-load-safe-path /lib/x86_64-linux-gnu/libthread_db-1.0.so
 
 set breakpoint pending on
 break __asan_report_error
@@ -154,4 +155,16 @@ end
 document tsdump
 tsdump sv => p/x *sv; Perl_sv_dump(my_perl, sv)
 see `help sdump`
+end
+
+define addr2sym
+    if $argc == 1
+        printf "[%u]: ", $arg0
+        #whatis/ptype EXPR
+        #info frame ADDR
+        info symbol $arg0
+    end
+end
+document addr2sym
+Resolve the address (e.g. of one stack frame). Usage: addr2sym addr0
 end

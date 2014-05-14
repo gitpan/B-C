@@ -3,35 +3,35 @@ abstract: 'Perl compiler'
 author:
   - 'Malcolm Beattie (retired), Reini Urban <perl-compiler@googlegroups.com>'
 build_requires:
-  ExtUtils::MakeMaker: 0
+  ExtUtils::MakeMaker: '0'
 configure_requires:
-  ExtUtils::MakeMaker: 0
+  ExtUtils::MakeMaker: '0'
 dynamic_config: 1
 generated_by: 'ExtUtils::MakeMaker version 6.88, CPAN::Meta::Converter version 2.132830'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
-  version: 1.4
+  version: '1.4'
 name: B-C
 no_index:
   directory:
     - t
     - inc
 recommends:
-  B::Debug: 1.16
-  B::Flags: 0.04
-  IPC::Run: 0
-  Opcodes: 0.10
+  B::Debug: '1.16'
+  B::Flags: '0.04'
+  IPC::Run: '0'
+  Opcodes: '0.10'
 requires:
-  B::Flags: 0.04
-  ExtUtils::Embed: 1.25
-  IPC::Run: 0
-  Opcodes: 0
-  Time::HiRes: 0
+  B::Flags: '0.04'
+  ExtUtils::Embed: '1.25'
+  IPC::Run: '0'
+  Opcodes: '0'
+  Time::HiRes: '0'
 resources:
   MailingList: http://groups.google.com/group/perl-compiler
   bugtracker: http://code.google.com/p/perl-compiler/issues
   homepage: http://www.perl-compiler.org
   license: http://dev.perl.org/licenses/
   repository: http://perl-compiler.googlecode.com/
-version: 1.45_06
+version: '1.46'

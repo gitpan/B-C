@@ -37,6 +37,10 @@ EOF
 
 my $ITHREADS = $Config{useithreads};
 
+sub diagv {
+  diag @_ if $ENV{TEST_VERBOSE};
+}
+
 sub compile_check {
   my ($num,$b,$base,$script,$cmt) = @_;
   my $name = $base."_$num";
@@ -46,6 +50,7 @@ sub compile_check {
   close F;
   my $X = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
   $b .= ',-DCsp,-v';
+  diagv "$X -Iblib/arch -Iblib/lib -MO=$b,-o$name.c $name.pl";
   my ($result,$out,$stderr) =
     run_cmd("$X -Iblib/arch -Iblib/lib -MO=$b,-o$name.c $name.pl", 20);
   unless (-e "$name.c") {
@@ -61,6 +66,9 @@ sub compile_check {
   ok(!$notfound, $cmt.', no "blocking not found" warning');
   # check stderr for "save package_pv "blocking" for method_name"
   my $found = $stderr =~ /save package_pv "blocking" for method_name/;
+  if ($found) {
+    $found = $stderr !~ /save method_name "IO::Socket::blocking"/;
+  }
   ok(!$found, $cmt.', blocking as method_name saved');
 }
 
@@ -68,5 +76,11 @@ compile_check(1,'C,-O3,-UB','ccode95i',$issue,"untyped");
 compile_check(2,'C,-O3,-UB','ccode95i',$typed,'typed');
 
 use B::C ();
-ctestok(3,'C,-O3,-UB','ccode95i',$issue,
-      (($B::C::VERSION lt '1.42_61' or $ITHREADS or $] > 5.015 or $] < 5.014) ? "TODO " : "").'run');
+# see #310: Warning: unable to close filehandle DATA properly
+# also: Constant subroutine HUGE_VAL redefined
+my $qr = '^(ok|Warning: unable to close filehandle.*\nok)$';
+my $todo = ($B::C::VERSION lt '1.42_61') ? "TODO " : "";
+if ($IO::Socket::SSL::VERSION ge '1.956' and $IO::Socket::SSL::VERSION lt '1.984') {
+  $todo = "TODO [cpan #95452] bad IO::Socket::SSL $IO::Socket::SSL::VERSION, ";
+}
+ctest(5,$qr,'C,-O3,-UB','ccode95i',$issue, $todo.' run');

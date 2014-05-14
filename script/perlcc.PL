@@ -380,6 +380,7 @@ sub compile_byte {
 	_die("$Input did not compile $errcode:\n@$error_r\n");
     } else {
 	my @error = grep { !/^$Input syntax OK$/o } @$error_r;
+	@error = grep { !/^No package specified for compilation, assuming main::$/o } @error;
 	warn "$0: Unexpected compiler output\n@error" if @error and opt('v')<5;
 	warn "@error" if @error and opt('v')>4;
     }
@@ -555,7 +556,7 @@ sub cc_harness_msvc {
     $compile .= " -DHAVE_INDEPENDENT_COMALLOC" if $B::C::Flags::have_independent_comalloc;
     $compile .= $B::C::Flags::extra_cflags;
     $compile .= " -I".$_ for split /\s+/, opt('I');
-    $compile .= " -DNO_DYNAMIC_LOADING" if opt('staticxs');
+    $compile .= " -DSTATICXS" if opt('staticxs');
     $compile .= " ".opt('Wc') if opt('Wc');
 
     $link .= " -libpath:".$_ for split /\s+/, opt('L');
@@ -602,7 +603,7 @@ sub cc_harness {
     $command .= $B::C::Flags::extra_cflags if $B::C::Flags::extra_cflags;
     $command .= " -I".$_ for split /\s+/, opt('I');
     $command .= " -L".$_ for split /\s+/, opt('L');
-    $command .= " -DNO_DYNAMIC_LOADING" if opt('staticxs');
+    $command .= " -DSTATICXS" if opt('staticxs');
     $command .= " ".opt('Wc') if opt('Wc');
     my $ccflags = $command;
 

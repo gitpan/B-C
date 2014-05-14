@@ -3,8 +3,9 @@
 	The Perl compiler was in CORE from alpha4 until Perl 5.9.4
 	and worked quite fine with Perl 5.6 and 5.8
 
-1.45_06	2014-02-24 rurban
-	Added global destruction, improved -O4 and CC
+1.46 2014-05-14 rurban
+	Added global destruction, improved -O4 and CC, fixed mro, @-, $/ $\, Net::DNS, ...
+        Added mro and re core testsuite.
 
 	* C: reset PL_stack_sp on init (was one too far). no effects on code.
 	Implement global destruction via sv_clean_objs and my_curse on -O3, resp.
@@ -21,6 +22,7 @@
 	-fwarn-sv is now always set, just not with MSVC on Windows. The warnings are then
 	  directly set, not in a tight loop afterwards, because the value is needed for
 	  the dynamic init.
+        Fixed lexical warnings on 5.8 (pWARN_STD .. pWARN_NONE)
 	Improve -O4 by keeping all CvSTART cops
 	Keep internal packages if used in the source code, e.g. mro (#300)
 	Fix the order of PerlIO_cleanup, after global destruction (#302, #303)
@@ -30,9 +32,39 @@
 	  when cleaning up the stack on non-local exits, like die or exit or subs on the
 	  compile stack as with Attribute::Handler (#169, #304). Previously only END block
 	  function padlists were dynamic (#298).
+	Add run-time remap of compile-time XS symbols via dlsym (#305, RT #94069)
+	  Net::DNS includes Encode::XS ascii_encoding, but also init the 3 other encoding ptrs.
+          Add a fast path for d_dlopen + i_dlfcn systems (i.e. Windows goes the slow init2 route)
+	Detect new Encode-2.58 which stores encodings better to handle proper
+          compile-time usage (#305, RT #94221)
+	Add special SV associations for $/, $@ and $\ (#306, #256)
+	Save @ISA for all included packages, esp. DynaLoader dependencies (#308)
+        Replace each %hash with foreach sort keys (#307)
+	Set ${^GLOBAL_PHASE} with -O3 for END and DESTRUCT (#197, #208)
+	Do not store invalid GvCV symbols, only cv or &sv_list entries (#313)
+	Support GvFORM pseudo CVs (B::FM objects) on 5.10 (#149)
+	Support local $/ = "somestring" (only used empty values before) (#314),
+          A regression from 1.43
+	Support local $\ = "somestring" (#318), also a regression from 1.43
+	Fix special 5.6. associations for $, $\ as they are no SVs there (#306)
+        Fix wrong caching of internal LEXWARN symbols (#322)
+        Warn on bad IO::Socket::SSL versions 1.956-1.983 which would SEGV if used as server (#317)
+        Support __DATA__ blocks in packages without printing wrong warnings (#310)
+	Support ->(maybe|next)::(method|can) mro method calls (#324, #301)
+	Support mro c3 (#316)
+	Support @- @LAST_MATCH_START, the array of the last submatches (#281, #220, #295)
+	Workaround a 5.18 de-optimization which disabled ++PL_sv_objcount on bless
+	  by adding it if a DESTROY method exists. This will fail since 5.18 if DESTROY
+	  is added at run-time. (#208, #197)
+        Add new init0 section to initialize -fppaddr ops before init, not afterwards. (#330)
+          Needed to call utf8::SWASHINIT at init with CALLREGCOMP and /i
+        Avoid duplicate PL_utf8_tofold ToCf swash initialization with 5.18 (#330)
 	* CC (1.15): Skip saving non-existing methods analog to B::C 1.43_06 (CC test 50)
 	Fix failing CopFILE_free and CopSTASH_free in END blocks with threads (#296, CC test 48)
 	Handle duplicate function names, like multiple END blocks or anon functions (#297)
+        Replace each %hash with foreach sort keys (#307)
+        * Bytecode (1.15): Replace each %hash with foreach keys (#307)
+	* Bblock (1.04): Do not pollute B::CC (find_leaders) with B::Concise
 
 1.45	2014-02-11 rurban
 	* t/issue281.t: fix wrong test ($[ vs $])
