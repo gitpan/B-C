@@ -4,7 +4,7 @@
       "Malcolm Beattie (retired), Reini Urban <perl-compiler@googlegroups.com>"
    ],
    "dynamic_config" : 1,
-   "generated_by" : "ExtUtils::MakeMaker version 6.88, CPAN::Meta::Converter version 2.132830",
+   "generated_by" : "ExtUtils::MakeMaker version 6.98, CPAN::Meta::Converter version 2.141520",
    "license" : [
       "perl_5"
    ],
@@ -60,5 +60,5 @@
       },
       "x_MailingList" : "http://groups.google.com/group/perl-compiler"
    },
-   "version" : "1.46"
+   "version" : "1.47"
 }
