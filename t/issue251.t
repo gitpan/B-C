@@ -7,6 +7,7 @@ BEGIN {
   require "test.pl";
 }
 use Test::More tests => 7;
+use Config;
 my $name = 'ccode251i';
 use B::C ();
 my $todo = ($B::C::VERSION ge '1.43_06') ? "" : "TODO ";
@@ -32,7 +33,9 @@ sub f{1};$e=exists &f;$d=defined &f;print "ok" if "-$e-$d-" eq "-1-1-";
 EOF
 
 # similar but not same as test 1
-ctestok(6,'C,-O3','ccode290i',<<'EOF', 'TODO #290 empty sub exists && not defined');
+# passes now threaded >= 5.8.9
+my $todo6 = ($]<5.008009 or !$Config{useithreads} ? "TODO " : "");
+ctestok(6,'C,-O3','ccode290i',<<'EOF', $todo6.'#290 empty sub exists && not defined');
 sub f; print "ok" if exists &f && not defined &f;
 EOF
 

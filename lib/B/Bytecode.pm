@@ -3,17 +3,17 @@
 # Copyright (c) 1994-1999 Malcolm Beattie. All rights reserved.
 # Copyright (c) 2003 Enache Adrian. All rights reserved.
 # Copyright (c) 2008-2011 Reini Urban <rurban@cpan.org>. All rights reserved.
-# Copyright (c) 2011-2013 cPanel Inc. All rights reserved.
+# Copyright (c) 2011-2014 cPanel Inc. All rights reserved.
 # This module is free software; you can redistribute and/or modify
 # it under the same terms as Perl itself.
 
 # Reviving 5.6 support here is work in progress, and not yet enabled.
 # So far the original is used instead, even if the list of failed tests
-# is impressive: 3,6,8..10,12,15,16,18,25..28. Pretty broken.
+# with the old 5.6. compiler is impressive: 3,6,8..10,12,15,16,18,25..28.
 
 package B::Bytecode;
 
-our $VERSION = '1.15';
+our $VERSION = '1.16';
 
 use 5.008;
 use B qw( class main_cv main_root main_start
@@ -39,7 +39,7 @@ BEGIN {
 		 warnhook diehook SVt_PVGV
 		 SVf_FAKE));
   } else {
-    B->import(qw(walkoptree walksymtable));
+    B->import(qw(walkoptree));
   }
   if ($] > 5.017) {
     B->import('SVf_IsCOW') ;
@@ -115,6 +115,30 @@ BEGIN {
 }
 
 sub as_hex {$quiet ? undef : sprintf("0x%x",shift)}
+
+# Fixes bug #307: use foreach, not each
+# each is not safe to use (at all). walksymtable is called recursively which might add
+# symbols to the stash, which might cause re-ordered rehashes, which will fool the hash
+# iterator, leading to missing symbols.
+# Old perl5 bug: The iterator should really be stored in the op, not the hash.
+sub walksymtable {
+  my ($symref, $method, $recurse, $prefix) = @_;
+  my ($sym, $ref, $fullname);
+  $prefix = '' unless defined $prefix;
+  foreach my $sym ( sort keys %$symref ) {
+    no strict 'refs';
+    $ref = $symref->{$sym};
+    $fullname = "*main::".$prefix.$sym;
+    if ($sym =~ /::$/) {
+      $sym = $prefix . $sym;
+      if (svref_2object(\*$sym)->NAME ne "main::" && $sym ne "<none>::" && &$recurse($sym)) {
+        walksymtable(\%$fullname, $method, $recurse, $sym);
+      }
+    } else {
+      svref_2object(\*$fullname)->$method();
+    }
+  }
+}
 
 #################################################
 
@@ -652,14 +676,15 @@ sub B::CV::bsave {
   my $gvix      = ($cv->GV and ref($cv->GV) ne 'B::SPECIAL') ? $cv->GV->ix : 0;
   my $padlistix = $cv->PADLIST->ix;
   my $outsideix = $cv->OUTSIDE->ix;
-  my $startix   = $cv->START->opwalk;
+  # there's no main_cv->START optree since 5.18
+  my $startix   = $cv->START->opwalk if $] < 5.018 or $$cv != ${main_cv()};
   my $rootix    = $cv->ROOT->ix;
   # TODO 5.14 will need CvGV_set to add backref magic
   my $xsubanyix  = ($cv->CONST and !$PERL56) ? $cv->XSUBANY->ix : 0;
 
   $cv->B::PVMG::bsave($ix);
   asm "xcv_stash",       $stashix;
-  asm "xcv_start",       $startix;
+  asm "xcv_start",       $startix if $startix; # e.g. main_cv 5.18
   asm "xcv_root",        $rootix;
   asm "xcv_xsubany",     $xsubanyix unless $PERL56;
   asm "xcv_padlist",     $padlistix;
@@ -741,15 +766,15 @@ sub B::AV::bsave {
 sub B::PADLIST::bsave {
   my ( $padl, $ix ) = @_;
   my @array = $padl->ARRAY;
-  bless $array[0], 'B::PAD';
-  bless $array[1], 'B::PAD';
+  bless $array[0], 'B::PAD' if ref $array[0] eq 'B::AV';
+  bless $array[1], 'B::PAD' if ref $array[1] eq 'B::AV';
   my $ix0 = $array[0]->ix; # comppad_name
   my $ix1 = $array[1]->ix; # comppad syms
 
   nice "-PADLIST-",
     asm "ldsv", $varix = $ix unless $ix == $varix;
-  asm "padl_name", $ix0;
-  asm "padl_sym",  $ix1;
+  asm "padl_name", $ix0 if ref $array[0] eq 'B::PAD';
+  asm "padl_sym",  $ix1 if ref $array[1] eq 'B::PAD';
 }
 
 sub B::GV::desired {
@@ -821,6 +846,9 @@ sub B::OP::bsave_thin {
     if ($] >= 5.019002 and $op->can('folded')) {
       asm "op_folded", $op->folded if $op->folded;
     }
+    if ($] >= 5.021002 and $op->can('lastsib')) {
+      asm "op_lastsib", $op->lastsib if $op->lastsib;
+    }
   }
 }
 
@@ -883,24 +911,29 @@ sub B::LISTOP::bsave {
   my $name = $op->name;
   sub blocksort() { OPf_SPECIAL | OPf_STACKED }
   if ( $name eq 'sort' && ( $op->flags & blocksort ) == blocksort ) {
+    # Note: 5.21.2 PERL_OP_PARENT support work in progress
     my $first    = $op->first;
     my $pushmark = $first->sibling;
     my $rvgv     = $pushmark->first;
     my $leave    = $rvgv->first;
 
     my $leaveix = $leave->ix;
+    #asm "comment", "leave" unless $quiet;
 
     my $rvgvix = $rvgv->ix;
     asm "ldop", $rvgvix unless $rvgvix == $opix;
+    #asm "comment", "rvgv" unless $quiet;
     asm "op_first", $leaveix;
 
     my $pushmarkix = $pushmark->ix;
     asm "ldop", $pushmarkix unless $pushmarkix == $opix;
+    #asm "comment", "pushmark" unless $quiet;
     asm "op_first", $rvgvix;
 
     my $firstix = $first->ix;
     asm "ldop", $firstix unless $firstix == $opix;
-    asm "op_sibling", $pushmarkix;
+    #asm "comment", "first" unless $quiet;
+    asm "op_sibling", $pushmarkix; # if !$first->can('lastsib') or !$first->lastsib;
 
     $op->B::OP::bsave($ix);
     asm "op_first", $firstix;
@@ -921,11 +954,15 @@ sub B::LISTOP::bsave {
 
 sub B::OP::bsave_fat {
   my ( $op, $ix ) = @_;
-  my $siblix = $op->sibling->ix;
 
-  $op->B::OP::bsave_thin($ix);
-  asm "op_sibling", $siblix;
-
+  my $sibling = $op->sibling;
+  #if (!$op->can('lastsib') or !$op->lastsib) { # PERL_OP_PARENT
+    my $siblix = $sibling->ix;
+    $op->B::OP::bsave_thin($ix);
+    asm "op_sibling", $siblix;
+  #} else {
+  #  $op->B::OP::bsave_thin($ix);
+  #}
   # asm "op_seq", -1;			XXX don't allocate OPs piece by piece
 }
 
@@ -1203,8 +1240,8 @@ sub B::GV::bytecodecv {
   my $cv = $gv->CV;
   if ( $$cv && !( $gv->FLAGS & 0x80 ) ) { # GVf_IMPORTED_CV / && !saved($cv)
     if ($debug{cv}) {
-      warn sprintf( "saving extra CV &%s::%s (0x%x) from GV 0x%x\n",
-        $gv->STASH->NAME, $gv->NAME, $$cv, $$gv );
+      bwarn(sprintf( "saving extra CV &%s::%s (0x%x) from GV 0x%x\n",
+        $gv->STASH->NAME, $gv->NAME, $$cv, $$gv ));
     }
     $gv->bsave;
   }
@@ -1217,7 +1254,7 @@ sub symwalk {
   if ( grep { /^$_[0]/; } @packages ) {
     walksymtable( \%{"$_[0]"}, "desired", \&symwalk, $_[0] );
   }
-  warn "considering $_[0] ... " . ( $ok ? "accepted\n" : "rejected\n" )
+  bwarn("considering $_[0] ... " . ( $ok ? "accepted\n" : "rejected\n" ))
     if $debug{b};
   $ok;
 }

@@ -599,7 +599,9 @@ sub run_cc_test {
     $opt = '' unless $opt;
     use Config;
     require B::C::Flags;
-    my $test = $fnbackend."code".$cnt.".pl";
+    # note that the smokers run the c.t and c_o3.t tests in parallel, with possible
+    # interleaving file writes even for the .pl.
+    my $test = $fnbackend."code".$cnt.$opt.".pl";
     my $cfile = $fnbackend."code".$cnt.$opt.".c";
     my @obj;
     @obj = ($fnbackend."code".$cnt.$opt.".obj",
@@ -844,6 +846,7 @@ sub plctest {
     unlink($name, "$name.plc", "$name.pl", "$name.exe");
     open F, ">", "$base.pl";
     print F $script;
+    print F "\n";
     close F;
 
     my $runperl = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
@@ -851,13 +854,17 @@ sub plctest {
     my $nostdoutclobber = $base !~ /^ccode93i/;
     my $b = ($] > 5.008 and $nostdoutclobber) ? "-qq,Bytecode" : "Bytecode";
     my $Mblib = Mblib;
-    system "$runperl $Mblib -MO=$b,-o$name.plc $base.pl";
+    my $cmd = "$runperl $Mblib -MO=$b,-o$name.plc $base.pl";
+    diag($cmd) if $ENV{TEST_VERBOSE} and $ENV{TEST_VERBOSE} > 1;
+    system $cmd;
     # $out =~ s/^$base.pl syntax OK\n//m;
     unless (-e "$name.plc") {
         print "not ok $num #B::Bytecode failed\n";
         exit;
     }
-    my $out = qx($runperl $Mblib -MByteLoader $name.plc);
+    $cmd = "$runperl $Mblib -MByteLoader $name.plc";
+    diag($cmd) if $ENV{TEST_VERBOSE} and $ENV{TEST_VERBOSE} > 1;
+    my $out = qx($cmd);
     chomp $out;
     my $ok = $out =~ /$expected/;
     if ($todo and $todo =~ /TODO/) {
@@ -1018,6 +1025,7 @@ sub todo_tests_default {
     push @todo, (42..43) if $] < 5.012;
     if ($what =~ /^c(|_o[1-4])$/) {
         # a regression
+	push @todo, (41)  if $] < 5.007; #regressions
         push @todo, (12)  if $what eq 'c_o3' and !$ITHREADS and $] >= 5.008009 and $] < 5.010;
 
         push @todo, (48)  if $what eq 'c_o4' and $ITHREADS;
@@ -1036,6 +1044,7 @@ sub todo_tests_default {
 	# solaris also. I suspected nvx<=>cop_seq_*
 	push @todo, (12)    if $^O eq 'MSWin32' and $Config{cc} =~ /^cl/i;
 	push @todo, (26)    if $what =~ /^cc_o[12]/;
+        push @todo, (27)    if $] > 5.008008 and $] < 5.009 and !$ITHREADS;
 	push @todo, (27)    if $] > 5.008008 and $] < 5.009 and $what eq 'cc_o2';
         push @todo, (103)   if ($] >= 5.012 and $] < 5.014 and !$ITHREADS);
         push @todo, (12,19,25) if $] >= 5.019;

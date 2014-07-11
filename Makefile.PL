@@ -325,7 +325,6 @@ sub depend {
     my $asmdata = File::Spec->catfile('lib', 'B', 'Asmdata.pm');
     my $byterun_c = File::Spec->catfile('ByteLoader', 'byterun.c');
     my $byterun_h = File::Spec->catfile('ByteLoader', 'byterun.h');
-    my $cc_runtime_h = File::Spec->catfile($headerpath, 'cc_runtime.h');
     my $result = "
 $asmdata : Makefile bytecode.pl @headers
 	\$(PERL) bytecode.pl
@@ -378,16 +377,15 @@ testcore-log :: pure_all
 
 sub install {
     my $result = shift->SUPER::install(@_);
-    if ($] > 5.013007 and !-e File::Spec->catfile($headerpath, 'cc_runtime.h')) {
+    my $headerpath = main::headerpath();
+    my $cc_runtime_h = File::Spec->catfile($headerpath, 'cc_runtime.h');
+    if ($] > 5.013007 and !-e $cc_runtime.h) {
         $result =~ s/install :: pure_install doc_install/install :: pure_install doc_install ccinc_install/;
 	$result .= '
 ccinc_install :: $(PERL_INC)/cc_runtime.h
 
 $(PERL_INC)/cc_runtime.h : cc_runtime.h
-	$(NOECHO) $(MOD_INSTALL) \
-	    	read $(PERL_ARCHLIB)/auto/$(FULLEXT)/.packlist \
-		write $(DESTINSTALLARCHLIB)/auto/$(FULLEXT)/.packlist \
-		cc_runtime.h $@
+	$(NOECHO) $(CP) cc_runtime.h $@
 ';
     }
     $result

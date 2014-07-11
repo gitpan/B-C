@@ -18,5 +18,6 @@ dclone $a;
 print q(ok)';
 
 my $cmt = "BC missing import 5.16";
-my $todo = "TODO BC dclone 5.16thr " if $] > 5.015 and $ITHREADS;
+my $todo = ($] =~ /^5.016/ and $Config{useithreads}) ? "TODO " : "";
+$todo = "TODO " if $] < 5.007;
 plctestok(1, "ccode105i", $source, $todo.$cmt);

@@ -213,7 +213,7 @@ t/C-COMPILED/CORE--mro--inconsistent_c3.t
 t/C-COMPILED/CORE--mro--isa_aliases.t
 t/C-COMPILED/CORE--mro--isa_c3.t
 t/C-COMPILED/CORE--mro--isa_dfs.t
-t/C-COMPILED/CORE--mro--isarev==SIG-0.t
+t/C-COMPILED/CORE--mro--isarev==BADTEST-353.t
 t/C-COMPILED/CORE--mro--method_caching.t
 t/C-COMPILED/CORE--mro--next_NEXT.t
 t/C-COMPILED/CORE--mro--next_edgecases.t
@@ -816,7 +816,9 @@ t/issue330.t
 t/issue338.t
 t/issue34.t
 t/issue340.t
+t/issue348.t
 t/issue35.t
+t/issue350.t
 t/issue36.t
 t/issue37.t
 t/issue38.t

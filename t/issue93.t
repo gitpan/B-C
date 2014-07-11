@@ -11,7 +11,7 @@ use Test::More tests => 9;
 use Config;
 my $i=0;
 
-my $todo = <<'EOF';
+my $todo = <<'EOS';
 # === compiled ===
 my ($pid, $out, $in);
 BEGIN {
@@ -29,7 +29,7 @@ kill 0, $pid; 			     # BAD! warn? die? how?
 read $in, my $x, 4;
 print 'k' if 'test' eq $x;
 unlink 'pcc.tmp';
-EOF
+EOS
 
 my $ok = <<'EOF';
 my $out;open($out,'>&STDOUT');print $out qq(ok\n);
@@ -44,7 +44,6 @@ sub test3 {
   my $script = shift;
   my $cmt = shift;
   my $todobc = (($name eq 'ccode93iw' and $] < 5.014)?"TODO needs 5.14 ":"");
-  $todobc = 'TODO 5.18 ' if $] >= 5.018;
   plctestok($i*3+1, $name, $script,$todobc."BC $cmt");
   ctestok($i*3+2, "C", $name, $script, "C $cmt");
   ctestok($i*3+3, "CC", $name, $script, "CC $cmt");
