@@ -12,7 +12,7 @@
 package B::C;
 use strict;
 
-our $VERSION = '1.48';
+our $VERSION = '1.49';
 our %debug;
 our $check;
 my $eval_pvs = '';
@@ -3354,13 +3354,11 @@ sub B::CV::save {
   }
 
   if ($fullname eq 'IO::Socket::SSL::SSL_Context::new') {
-    if ($IO::Socket::SSL::VERSION ge '1.956') {
-      # Unhelpful upstream maintainer. Needed to fork it.
+    if ($IO::Socket::SSL::VERSION ge '1.956' and $IO::Socket::SSL::VERSION lt '1.995') {
       # See https://code.google.com/p/perl-compiler/issues/detail?id=317
       # https://rt.cpan.org/Ticket/Display.html?id=95452
-      # https://github.com/noxxi/p5-io-socket-ssl/pull/13
       warn "Warning: Your IO::Socket::SSL version $IO::Socket::SSL::VERSION is unsupported to create\n".
-           "  a server. You need to use cPanel::IO::Socket::SSL instead [CPAN #95452]\n";
+           "  a server. You need to upgrade IO::Socket::SSL to at least 1.995 [CPAN #95452]\n";
     }
   }
 
@@ -4798,11 +4796,11 @@ sub B::IO::save_data {
     $init->pre_destruct( sprintf 'eval_pv("close %s;", 1);', $globname );
     $use_xsloader = 1; # layers are not detected as XSUB CV, so force it
     require PerlIO unless $savINC{'PerlIO.pm'};
-    require PerlIO::scalar unless $savINC{'PerlIO/Scalar.pm'};
+    require PerlIO::scalar unless $savINC{'PerlIO/scalar.pm'};
     mark_package("PerlIO", 1);
-    # $savINC{'PerlIO.pm'} = $INC{'PerlIO.pm'};  # as it was loaded from BEGIN
+    $curINC{'PerlIO.pm'} = $INC{'PerlIO.pm'};  # as it was loaded from BEGIN
     mark_package("PerlIO::scalar", 1);
-    # $savINC{'PerlIO/scalar.pm'} = $INC{'PerlIO/scalar.pm'};
+    $curINC{'PerlIO/scalar.pm'} = $INC{'PerlIO/scalar.pm'};
     $xsub{'PerlIO::scalar'} = 'Dynamic-'.$INC{'PerlIO/scalar.pm'}; # force dl_init boot
   }
 }
@@ -5930,7 +5928,7 @@ _EOT9
         #print "\tPUTBACK;\n";
       } else {
         warn "no dl_init for $stashname, ".
-          (!$xsub{$stashname} ? "not marked\n" : "marked as $xsub{$stashname}\n")
+          (!$xsub{$stashname} ? "not bootstrapped\n" : "bootstrapped as $xsub{$stashname}\n")
 	    if $verbose;
 	# XXX Too late. This might fool run-time DynaLoading.
 	# We really should remove this via init from @DynaLoader::dl_modules
