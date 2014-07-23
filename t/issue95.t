@@ -77,8 +77,8 @@ compile_check(2,'C,-O3,-UB','ccode95i',$typed,'typed');
 
 use B::C ();
 # see #310: Warning: unable to close filehandle DATA properly
-# also: Constant subroutine HUGE_VAL redefined
-my $qr = '^(ok|Warning: unable to close filehandle.*\nok)$';
+# also: Constant subroutine HUGE_VAL redefined (5.16.3, 5.16.3-nt) #367
+my $qr = '^(ok|Warning: unable to close filehandle.*\nok|Constant subroutine HUGE_VAL redefined.*\nok)$';
 my $todo = ($B::C::VERSION lt '1.42_61') ? "TODO" : "";
 # bad: 1.956 - 1.984
 if ($IO::Socket::SSL::VERSION ge '1.956' and $IO::Socket::SSL::VERSION lt '1.984') {
@@ -86,4 +86,4 @@ if ($IO::Socket::SSL::VERSION ge '1.956' and $IO::Socket::SSL::VERSION lt '1.984
 }
 $todo = "TODO 5.18 \#356" if $] >= 5.018; # double free or corruption
 $todo = "TODO <5.8.8" if $] < 5.008008;
-ctest(5,$qr,'C,-O3,-UB','ccode95i',$issue, $todo.' run');
+ctest(5,$qr,'C,-O3','ccode95i',$issue, $todo.' run');

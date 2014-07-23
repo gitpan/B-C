@@ -1,4 +1,4 @@
-# B::C::VERSION = 1.48 c066c38 2014-07-10 | another module update run
+# B::C::VERSION = 1.49_03 e895b26 2014-07-19 | Fix invalid free of Net::SSLeay::ERROR_WANT_WRITE (95)
 # perlversion = 5.008008
 # path = /usr/bin/perl
 # platform = linux 64bit threaded
@@ -102,7 +102,7 @@ pass IO::String
 pass AppConfig
 pass UNIVERSAL::require
 pass Template::Stash
-# 100 / 100 modules tested with B-C-1.48 - perl-5.008008
+# 100 / 100 modules tested with B-C-1.49_03 - perl-5.008008
 # pass  99 / 100 (99.0%)
 # fail   1 / 100 (1.0%)
 # todo   1 /   1 (100.0%)

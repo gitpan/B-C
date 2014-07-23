@@ -15,10 +15,12 @@ use strict;
 use warnings;
 use IO::Socket;
 my $remote = IO::Socket::INET->new( Proto => "tcp", PeerAddr => "perl.org", PeerPort => "80" );
-print $remote "GET / HTTP/1.0" . "\r\n\r\n";
-my $result = <$remote>;
-$result =~ m|HTTP/1.1 200 OK| ? print "ok" : print $result;
-close $remote;
+if ($remote) {
+  print $remote "GET / HTTP/1.0" . "\r\n\r\n";
+  my $result = <$remote>;
+  $result =~ m|HTTP/1.1 200 OK| ? print "ok" : print $result;
+  close $remote;
+}
 EOF
 
 open F, "> $name.pl";
@@ -30,17 +32,19 @@ my $runperl = $^X =~ m/\s/ ? qq{"$^X"} : $^X;
 my $q = $] < 5.008001 ? "" : "-qq,";
 my $result = qx($runperl $name.pl);
 my $canconnect = $result eq $expected ? 1 : 0;
-
-my $cmt = ($canconnect ? "" : "TODO ") ."connect to http://perl.org:80 via IO::Socket";
-plctestok(1, $name, $script, $cmt);
+my $cmt = "connect to http://perl.org:80 via IO::Socket";
 
 SKIP: {
+  skip "cannot $cmt", 3 if !$canconnect;
   #skip "eats memory on 5.6", 2 if $] <= 5.008001;
   #skip "fails 5.14 threaded", 2
   #  if $] > 5.014 and $] < 5.015 and $Config{'useithreads'} and (!-d ".git" or $ENV{NO_AUTHOR});
+
+  plctestok(1, $name, $script, "BC $name ".$cmt);
+
   #$cmt = "TODO 5.14thr" if $] > 5.014 and $] < 5.015 and $Config{'useithreads'};
   #$cmt = "TODO >=5.16" if $] >= 5.016; # fixed with 1.45_04
-  $cmt = "TODO <5.10"   if $] < 5.010;
-  ctestok(2, "C", $name, $script, "C $name $cmt");
-  ctestok(3, "CC", $name, $script, "CC $name $cmt");
+  $cmt = "TODO <5.10"   if $] < 5.010; # no idea why
+  ctestok(2, "C", $name, $script, "C $name ".$cmt);
+  ctestok(3, "CC", $name, $script, "CC $name ".$cmt);
 }
