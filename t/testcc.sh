@@ -738,7 +738,10 @@ tests[192]='use warnings;
  }}->($h{k});
 }'
 tests[193]='unlink q{not.a.file}; $! = 0; open($FOO, q{not.a.file}); print( $! ne 0 ? "ok" : q{error: $! should not be 0}."\n"); close $FOO;'
-tests[194]='$0 = q{ccdave}; #print "pid: $$\n";
+tests[194]='$0 = q{ccdave with long name}; #print "pid: $$\n";
+$s=`ps w | grep "$$" | grep "[c]cdave"`;
+print ($s =~ /ccdave with long name/ ? q(ok) : $s);'
+tests[1941]='$0 = q{ccdave}; #print "pid: $$\n";
 $s=`ps auxw | grep "$$" | grep "ccdave"|grep -v grep`;
 print q(ok) if $s =~ /ccdave/'
 # duplicate of 152
@@ -1134,6 +1137,34 @@ $foo->method;'
 tests[350]='package Foo::Moose; use Moose; has bar => (is => "rw", isa => "Int"); 
 package main; my $moose = Foo::Moose->new; print "ok" if 32 == $moose->bar(32);'
 tests[368]='use EV; print q(ok)'
+tests[369]='
+use EV;
+use Coro;
+use Coro::Timer;
+my @a;
+push @a, async {
+  while() {
+    warn $c++;
+    Coro::Timer::sleep 1;
+  };
+};
+push @a, async {
+  while() {
+    warn $d++;
+    Coro::Timer::sleep 0.5;
+  };
+};
+schedule;
+print q(ok)'
+tests[371]='package foo;use Moose;
+has "x" => (isa => "Int", is => "rw", required => 1);
+has "y" => (isa => "Int", is => "rw", required => 1);
+sub clear { my $self = shift; $self->x(0); $self->y(0); }
+__PACKAGE__->meta->make_immutable;
+package main;
+my $f = foo->new( x => 5, y => 6);
+print $f->x . "\n";'
+result[371]='5'
 
 init
 

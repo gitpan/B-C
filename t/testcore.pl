@@ -16,7 +16,6 @@
 #
 # See TESTS for recent results
 
-
 use Cwd;
 use File::Copy;
 
@@ -58,119 +57,58 @@ for (qw(
        )) {
   $ALLOW_PERL_OPTIONS{"t/CORE/$_"} = 1;
 }
-my $SKIP = { "CC" =>
-             { "t/CORE/op/bop.t" => "hangs",
-               "t/CORE/op/die.t" => "hangs",
-             }
-           };
+my $SKIP =
+  { "CC" =>
+    { "t/CORE/op/bop.t" => "hangs",
+      "t/CORE/op/die.t" => "hangs",
+    },
+    "C" =>
+    { ($] >= 5.020 ? ("t/CORE/op/eval.t" => "hangs in endless recursion since 5.20") : ()),
+    },
+  };
 
+# for C only, tested with 5.21.3d-nt
 my @fail = map { "t/CORE/$_" }
-  qw{
-     base/rs.t
-     base/term.t
-     cmd/for.t
-     cmd/subval.t
-     cmd/while.t
-     comp/colon.t
-     comp/hints.t
-     comp/multiline.t
-     comp/packagev.t
-     comp/parser.t
-     comp/require.t
-     comp/retainedlines.t
-     comp/script.t
-     comp/uproto.t
-     comp/use.t
-     io/argv.t
-     io/binmode.t
-     io/crlf.t
-     io/crlf_through.t
-     io/errno.t
-     io/fflush.t
-     io/fs.t
-     io/inplace.t
-     io/iprefix.t
-     io/layers.t
-     io/nargv.t
-     io/open.t
-     io/openpid.t
-     io/perlio.t
-     io/perlio_fail.t
-     io/perlio_leaks.t
-     io/perlio_open.t
-     io/pipe.t
-     io/print.t
-     io/pvbm.t
-     io/read.t
-     io/say.t
-     io/tell.t
-     io/through.t
-     io/utf8.t
-     op/anonsub.t
-     op/array.t
-     op/attrs.t
-     op/avhv.t
-     op/bop.t
-     op/chop.t
-     op/closure.t
-     op/concat.t
-     op/defins.t
-     op/do.t
-     op/eval.t
-     op/filetest.t
-     op/flip.t
-     op/fork.t
-     op/goto.t
-     op/goto_xs.t
-     op/grent.t
-     op/gv.t
-     op/hashwarn.t
-     op/index.t
-     op/join.t
-     op/length.t
-     op/local.t
-     op/lfs.t
-     op/magic.t
-     op/method.t
-     op/misc.t
-     op/mkdir.t
-     op/my_stash.t
-     op/numconvert.t
-     op/pwent.t
-     op/regmesg.t
-     op/runlevel.t
-     op/sort.t
-     op/split.t
-     op/sprintf.t
-     op/stat.t
-     op/study.t
-     op/subst.t
-     op/substr.t
-     op/tie.t
-     op/tr.t
-     op/universal.t
-     op/utf8decode.t
-     op/vec.t
-     op/ver.t
-     uni/cache.t
-     uni/chomp.t
-     uni/chr.t
-     uni/class.t
-     uni/fold.t
-     uni/greek.t
-     uni/latin2.t
-     uni/lex_utf8.t
-     uni/lower.t
-     uni/sprintf.t
-     uni/tie.t
-     uni/title.t
-     uni/tr_7jis.t
-     uni/tr_eucjp.t
-     uni/tr_sjis.t
-     uni/tr_utf8.t
-     uni/upper.t
-     uni/write.t
-   };
+  (#'comp/colon.t', # ok with 5.14, 5.18, failed since 5.20 (fixed with #372)
+   'comp/hints.t',  # fails sv_magic assert with <= 5.14, ok since 5.16
+   #'comp/package.t', # fails only with -O0
+   #'comp/parser.t',# ok with 5.14, failed since 5.18, updated with 1.51_02
+   #'comp/retainedlines.t',# ok with 5.14, failed since 5.18. fixed test
+   'io/layers.t',
+   # eval workaround fails with perlcc even with 5.14
+   #'op/array.t',  # ok with 5.14, 5.18, 5.20, fails with 5.21 (push on glob deprecation)
+   'op/attrs.t',   # test 32, perlcc issue #xxx: anon sub :method not stored
+   'op/bop.t',     # ok with 5.14, fails since 5.18
+   'op/closure.t', # ok with 5.14, fails test 271 since 5.18
+   'op/do.t',      # ok with 5.14, 5.18, fails since 5.20
+   'op/eval.t',    # hangs since 5.20.0
+   'op/filetest.t',# ok with 5.14, fails since 5.18
+   'op/goto_xs.t',
+   # S_unshare_hek_or_pvn assert with glob assign'ed free,
+   # >=5.18 runtime SEGV at \IO SvAMAGIC(TEMP,ROK) in rv2gv at test 51, print {*x{IO}}
+   'op/gv.t',
+   'op/length.t',  # ok with 5.14, fails since 5.18 (string overload #373)
+   'op/local.t',   # ok with 5.14, fails test 269 since 5.18
+   'op/magic.t',   # ok with 5.14, fails since 5.18
+   'op/method.t',  # ok with 5.14, 5.18, 5.20, fails with 5.21
+   'op/misc.t',
+   'op/pwent.t',   # ok with 5.14, 5.18, fails since 5.20
+   'op/regmesg.t',
+   'op/sort.t',    # ok with 5.14, fails since 5.18
+   'op/sprintf.t', # ok with 5.14, 5.18, 5.20, fails with 5.21
+   'op/subst.t',
+   'op/substr.t',
+   'op/tie.t',     # ok with 5.14, fails since 5.18
+   'op/universal.t',
+   'uni/cache.t',  # ok with 5.14, fails since 5.18
+   'uni/chr.t',    # ok with 5.14, 5.18, fails since 5.20
+   # use encoding is deprecated: #354
+   'uni/tr_7jis.t', # fails with 5.14, ok with 5.20
+   'uni/tr_sjis.t', # fails with 5.14, ok with 5.20
+   'uni/greek.t',
+   'uni/latin2.t',
+   'uni/write.t',
+   );
 
 my @tests = $ARGV[0] eq '-fail'
   ? @fail
@@ -190,8 +128,8 @@ sub run_c {
   # perlcc 2.06 should now work also: omit unneeded B::Stash -u<> and fixed linking
   # see t/c_argv.t
   my $backopts = $backend eq 'C' ? "-qq,C,-O3" : "-qq,CC";
-  $backopts .= ",-fno-warnings" if $backend =~ /^C/ and $] >= 5.013005;
-  $backopts .= ",-fno-fold"     if $backend =~ /^C/ and $] >= 5.013009;
+  #$backopts .= ",-fno-warnings" if $backend =~ /^C/ and $] >= 5.013005;
+  #$backopts .= ",-fno-fold"     if $backend =~ /^C/ and $] >= 5.013009;
   vcmd "$^X $Mblib -MO=$backopts,-o$a.c $t";
   # CORE often does BEGIN chdir "t", patched to chdir "t/CORE"
   chdir $dir;

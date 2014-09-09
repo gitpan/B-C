@@ -12,7 +12,7 @@
 package B::C;
 use strict;
 
-our $VERSION = '1.51';
+our $VERSION = '1.52';
 our %debug;
 our $check;
 my $eval_pvs = '';
@@ -105,7 +105,11 @@ sub output {
     if ($dodbg and $section->[-1]{dbg}->[$i]) {
       $dbg = " /* ".$section->[-1]{dbg}->[$i]." ".$ref." */";
     }
-    printf $fh $format, $_, $section->name, $i, $ref, $dbg;
+    if ($format eq "\t{ %s }, /* %s_list[%d] %s */%s\n") {
+      printf $fh $format, $_, $section->name, $i, $ref, $dbg;
+    } else {
+      printf $fh $format, $_;
+    }
     ++$i;
   }
 }
@@ -729,7 +733,7 @@ sub savepv {
   return $strtable{$cstring} if defined $strtable{$cstring};
   $pv    = pack "a*", $pv;
   my $pvsym = sprintf( "pv%d", $pv_index++ );
-  $const = " const" if $const;
+  $const = $const ? " const" : "";
   if ( defined $max_string_len && length($pv) > $max_string_len ) {
     my $chars = join ', ', map { cchar $_ } split //, $pv;
     $decl->add( sprintf( "Static$const char %s[] = { %s };", $pvsym, $chars ) );
@@ -852,7 +856,10 @@ sub save_pv_or_rv {
           $pv = $savesym;
           $savesym = 'NULL';
         }
-        $len = $cur+2 if $iscow and $cur;
+        # align to next wordsize
+        if ($iscow and $cur) {
+          $len = $cur+2;
+        }
         #push @B::C::static_free, $savesym if $len and $savesym =~ /^pv/ and !$B::C::in_endav;
       } else {
 	$len = $cur+1;
@@ -864,11 +871,19 @@ sub save_pv_or_rv {
           }
           $free->add("    SvFAKE_off(&$s);");
         } else {
-          $len++ if $iscow and $cur;
+          if ($iscow and $cur) {
+            $len++;
+          }
         }
       }
     } else {
       $len = 0;
+    }
+  }
+  if ($len and $PERL518) {
+    my $ptrsize = $Config{ptrsize};
+    while ($len % $ptrsize) {
+      $len++;
     }
   }
   warn sprintf("Saving pv %s %s cur=%d, len=%d, static=%d cow=%d %s\n", $savesym, cstring($pv), $cur, $len,
@@ -1850,11 +1865,15 @@ sub B::COP::save {
   if (!$B::C::optimize_cop) {
     if (!$ITHREADS) {
       if ($B::C::const_strings) {
-        $init->add(sprintf( "CopSTASHPV_set(&cop_list[$ix], %s);", constpv($op->stashpv) ));
-        $init->add(sprintf( "CopFILE_set(&cop_list[$ix], %s);", constpv( $file ) ));
+        $init->add(sprintf( "CopSTASHPV_set(&cop_list[%d], %s);",
+                            $ix, constpv($op->stashpv) ),
+                   sprintf( "CopFILE_set(&cop_list[%d], %s);",
+                            $ix, constpv($file) ));
       } else {
-        $init->add(sprintf( "CopSTASHPV_set(&cop_list[$ix], %s);", cstring($op->stashpv) ));
-        $init->add(sprintf( "CopFILE_set(&cop_list[$ix], %s);", cstring($file) ));
+        $init->add(sprintf( "CopSTASHPV_set(&cop_list[%d], %s);",
+                            $ix, cstring($op->stashpv) ),
+                   sprintf( "CopFILE_set(&cop_list[%d], %s);",
+                            $ix, cstring($file) ));
       }
     } else { # cv_undef e.g. in bproto.t and many more core tests with threads
       my $stlen = "";
@@ -1928,6 +1947,18 @@ sub B::PMOP::save {
     );
     $init->add(sprintf("pmop_list[%d].op_pmstashstartu.op_pmreplstart = (OP*)$replstartfield;",
                        $pmopsect->index));
+    if ($] >= 5.017) {
+      my $code_list = $op->code_list;
+      if ($code_list and $$code_list) {
+        warn sprintf("saving pmop_list[%d] code_list $code_list (?{})\n", $pmopsect->index)
+          if $debug{gv};
+        my $code_op = $code_list->save;
+        $init->add(sprintf("pmop_list[%d].op_code_list = %s;", # (?{}) code blocks
+                           $pmopsect->index, $code_op)) if $code_op;
+        warn sprintf("done saving pmop_list[%d] code_list $code_list (?{})\n", $pmopsect->index)
+          if $debug{gv};
+      }
+    }
   }
   elsif ($PERL56) {
     # pmdynflags does not exist as B method. It is only used for PMdf_UTF8 dynamically,
@@ -2896,8 +2927,10 @@ sub B::PVMG::save_magic {
       # XXX On 5.6 ptr might be a SCALAR ref to the PV, which was fixed later
       if (ref($ptr) eq 'SCALAR') {
 	$ptrsv = svref_2object($ptr)->save($fullname);
-      } else {
+      } elsif ($ptr and ref $ptr) {
 	$ptrsv = $ptr->save($fullname);
+      } else {
+	$ptrsv = 'NULL';
       }
       warn "MG->PTR is an SV*\n" if $debug{mg};
       $init->add(sprintf("sv_magic((SV*)s\\_%x, (SV*)s\\_%x, %s, (char *)%s, %d);",
@@ -4331,14 +4364,15 @@ sub B::GV::save {
           # ignore stash hek asserts when adding the stash
           # he->shared_he_he.hent_hek == hek assertions (#46 with IO::Poll::)
         } else {
-          $init->add(sprintf("GvFILE_HEK($sym) = %s;", save_hek($gv->FILE)))
-            if !$optimize_cop;
+          my $file = save_hek($gv->FILE);
+          $init->add(sprintf("GvFILE_HEK(%s) = %s;", $sym, $file))
+            if $file ne 'NULL' and !$optimize_cop;
         }
 	# $init->add(sprintf("GvNAME_HEK($sym) = %s;", save_hek($gv->NAME))) if $gv->NAME;
       } else {
 	# XXX ifdef USE_ITHREADS and PL_curcop->op_flags & OPf_COP_TEMP
 	# GvFILE is at gp+1
-	$init->add( sprintf( "GvFILE($sym) = %s;", cstring( $gv->FILE ) ))
+	$init->add( sprintf( "GvFILE(%s) = %s;", $sym, cstring( $gv->FILE ) ))
 	  unless $optimize_cop;
 	warn "GV::save GvFILE(*$fullname) " . cstring( $gv->FILE ) . "\n"
 	  if $debug{gv} and !$ITHREADS;
@@ -4447,7 +4481,7 @@ sub B::AV::save {
                          $xpvavsect->index, $av->REFCNT, $av->FLAGS));
   }
 
-  my ($av_index, $magic);
+  my ($magic, $av_index) = ('');
   if (!$ispadlist) {
     $svsect->debug($fullname, $av->flagspv) if $debug{flags};
     my $sv_ix = $svsect->index;
@@ -5891,8 +5925,14 @@ _EOT9
     }
     # actually boot all non-b-c dependent modules here. we assume XSLoader (Moose, List::MoreUtils)
     if (!exists( $xsub{$stashname} ) and $include_package{$stashname}) {
-      warn "Assuming xs loaded $stashname\n" if $verbose;
-      $xsub{$stashname} = 'Dynamic-' . $savINC{$incpack};
+      $xsub{$stashname} = 'Dynamic-' . $INC{$incpack};
+      # Class::MOP without Moose: find Moose.pm
+      $xsub{$stashname} = 'Dynamic-' . $savINC{$incpack} unless $INC{$incpack};
+      if (!$savINC{$incpack}) {
+        eval "require $stashname;";
+        $xsub{$stashname} = 'Dynamic-' . $INC{$incpack};
+      }
+      warn "Assuming xs loaded $stashname with $xsub{$stashname}\n" if $verbose;
     }
     if ( exists( $xsub{$stashname} ) && $xsub{$stashname} =~ m/^Dynamic/ ) {
       # XSLoader.pm: $modlibname = (caller())[1]; needs a path at caller[1] to find auto,
@@ -6096,6 +6136,13 @@ _EOT11
 
     }
     print "    PL_exit_flags |= PERL_EXIT_DESTRUCT_END;\n" unless $PERL56;
+    if ($] >= 5.008009) {
+      print <<'_SAFE_PUTENV';
+#ifndef PERL_USE_SAFE_PUTENV
+    PL_use_safe_putenv = 0;
+#endif
+_SAFE_PUTENV
+    }
     if (!$PERL510) {
       print <<'_EOT12';
 #if defined(CSH)
@@ -6150,6 +6197,7 @@ _EOT15
       print sprintf(qq{    CopFILE_set(&PL_compiling, %s);\n}, $dollar_0);
     }
     else {
+      #print q{    warn("PL_origalen=%d\n", PL_origalen);},"\n";
       print qq{    sv_setpv_mg(get_sv("0", GV_ADD|GV_NOTQUAL), argv[0]);\n};
       print qq{    CopFILE_set(&PL_compiling, argv[0]);\n};
     }

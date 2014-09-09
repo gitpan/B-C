@@ -454,6 +454,7 @@ t/CORE/comp/decl.t
 t/CORE/comp/fold.t
 t/CORE/comp/form_scope.t
 t/CORE/comp/hints.aux
+t/CORE/comp/hints.t
 t/CORE/comp/line_debug.t
 t/CORE/comp/line_debug_0.aux
 t/CORE/comp/multiline.t
@@ -821,6 +822,7 @@ t/issue35.t
 t/issue350.t
 t/issue36.t
 t/issue368.t
+t/issue369.t
 t/issue37.t
 t/issue38.t
 t/issue39.t
